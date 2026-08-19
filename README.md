@@ -1,5 +1,9 @@
 # Raziel — Telegram Media Pipeline Bot
 
+<p align="center">
+  <img src="assets/raziel-avatar.png" alt="Raziel" width="300">
+</p>
+
 ![Version](https://img.shields.io/badge/version-v6.9-blue)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![Platform](https://img.shields.io/badge/platform-Telegram-26A5E4)
