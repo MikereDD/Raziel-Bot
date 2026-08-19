@@ -1,6 +1,6 @@
 #--------------------------------------------
 # file:     ytbotrc.py
-# author:   Mike Redd
+# author:   Typezer∅
 # version:  1.3
 # created:  2026-04-18
 # updated:  2026-05-03
@@ -90,7 +90,7 @@ PREFER_MP4 = True
 # ── Validation Policy ────────────────────────
 # True  = only allow configured platforms/domains
 # False = allow any URL and let yt-dlp decide
-STRICT_PLATFORM_VALIDATION = False,
+STRICT_PLATFORM_VALIDATION = False
 
 # ── Supported Video Platforms ────────────────
 # Used only when:
@@ -122,7 +122,7 @@ BOT_MENTION_ALIASES = (
 # ── Paths ────────────────────────────────────
 # Default is resolved relative to the bot parent directory.
 # Override if you want a fixed bot data root.
-BASE_DIR = "$HOME/bots"
+BASE_DIR = "$HOME/.local/share/raziel"
 
 # ── Local Telegram Bot API (optional but recommended) ────────
 LOCAL_BOT_API_URL = "http://127.0.0.1:8081/bot"

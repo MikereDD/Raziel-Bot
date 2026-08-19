@@ -70,8 +70,8 @@ This notes directory tracks:
 * [v5.4.1](v5.4.1.md) — Restrict pipeline to supported video sources (validation layer)
 * [v5.4.2](v5.4.2.md) — Config-driven platform support (enable/disable platforms without code changes)
 * [v5.4.3](v5.4.3.md) — Quality control commands (/dl 720p, /hd 1080p, /full best)
-* [v5.4.4](v5.4.4.md) — Help UI branding and unified bot presentation
-* [v5.4.5](v5.4.5.md) — Initial reply requeue prevention attempt
+* v5.4.4 — Help UI branding and unified bot presentation (standalone note not archived)
+* v5.4.5 — Initial reply requeue prevention attempt (standalone note not archived)
 * [v5.4.6](v5.4.6.md) — Strict reply guard to prevent repost loops from replied uploads
 * [v5.4.7](v5.4.7.md) — Finalized reply-loop protection system and stable repost prevention behavior
 * [v5.4.8](v5.4.8.md) — Clip metadata captions, normalized timestamps, and duration display polish
@@ -79,7 +79,7 @@ This notes directory tracks:
 * [v5.5](v5.5.md) — Runtime process restart control and tmux-safe self-restarting
 * [v5.6](v5.6.md) — Live Telegram progress system with real-time download status updates
 * [v5.7](v5.7.md) — Mention command layer and conversational inline interaction support
-* [v5.8.2](v5.8.2.md) — Telegram inline mode and global inline utility interaction
+* v5.8.2 — Telegram inline mode and global inline utility interaction (standalone note not archived)
 * [v5.8.3](v5.8.3.md) — Queue cleanup consistency and DM upload UX polish
 * [v5.8.4](v5.8.4.md) — Facebook platform registry validation fix
 * [v5.8.5](v5.8.5.md) — BitChute platform registry and validation support

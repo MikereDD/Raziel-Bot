@@ -1,18 +1,18 @@
 [Unit]
 Description=Telegram Bot API (Local)
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
-User=typezero
-WorkingDirectory=/mnt/nvme1/work/telegram-bot-api
-ExecStart=/home/typezero/src/telegram-bot-api/build/telegram-bot-api \
+User=YOUR_LINUX_USER
+WorkingDirectory=/var/lib/telegram-bot-api
+ExecStart=/usr/local/bin/telegram-bot-api \
   --api-id YOUR_API_ID \
   --api-hash YOUR_API_HASH \
   --local \
   --http-port 8081 \
-  --dir /mnt/nvme1/work/telegram-bot-api
-
-Restart=always
+  --dir /var/lib/telegram-bot-api
+Restart=on-failure
 RestartSec=5
 
 [Install]

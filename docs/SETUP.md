@@ -1,306 +1,164 @@
-# ⚙️ YTBot Setup Guide (v6.9)
+# Raziel Setup Guide
 
-> Full setup for Arakiel / Arch Linux environment
-> Covers dependencies, Telegram Bot API, and ytbot configuration
+This guide covers a standalone Raziel installation on Linux. Adjust package-manager and service paths for your own system.
 
----
+## 1. System dependencies
 
-## 🧩 Overview
+Raziel requires Python 3.10+ and FFmpeg/ffprobe.
 
-YTBot requires:
-
-* Python environment
-* ffmpeg / ffprobe
-* Telegram Bot API (local server)
-* ytbot configuration
-
----
-
-## 📦 1. Install System Dependencies
+On Arch Linux:
 
 ```bash
-sudo pacman -S ffmpeg ffprobe git base-devel
+sudo pacman -S --needed python ffmpeg git
 ```
 
-Optional (recommended):
+`ffprobe` is provided with FFmpeg on a standard Arch installation.
+
+A current JavaScript runtime can also help yt-dlp with extractors that require one:
 
 ```bash
-sudo pacman -S nodejs
+sudo pacman -S --needed nodejs
 ```
 
----
+## 2. Python environment
 
-## 🐍 2. Python Environment
+From the Raziel repository:
 
 ```bash
-cd /mnt/nvme1/work/bots
-python -m venv venv
-source venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
-Install packages:
+The `.venv/` directory is intentionally ignored by Git.
+
+## 3. Configuration
+
+For a simple local installation:
 
 ```bash
-pip install -U pip
-pip install "python-telegram-bot>=22.0" "yt-dlp>=2026.03.17"
+cp config/ytbotrc_EXAMPLE.py config/ytbotrc.py
+chmod 600 config/ytbotrc.py
 ```
 
----
-
-## ⚙️ 3. Configure ytbot
-
-Create config:
-
-```bash
-mkdir -p /mnt/nvme1/work/bots/config
-nano /mnt/nvme1/work/bots/config/ytbotrc.py
-```
-
-Example:
+Edit `config/ytbotrc.py` and set at least:
 
 ```python
 BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-
-ADMIN_USERS = [123456789]
-ALLOWED_USERS = [123456789]
-
-DOWNLOAD_TIMEOUT = 3600
-TELEGRAM_UPLOAD_TIMEOUT = 3600
-
-WATCH_FOLDER_ENABLED = True
-ARCHIVE_CHAT_ID = None
+ALLOWED_USER_ID = 123456789
 ```
 
----
+The live config is excluded by `.gitignore`.
 
-## 🤖 4. Telegram Bot API (Local Server)
-
-YTBot v5.3+ requires local Bot API for large uploads.
-
----
-
-### 📥 Build Telegram Bot API
+For a config completely outside the repository:
 
 ```bash
-cd ~/src
-git clone --recursive https://github.com/tdlib/telegram-bot-api.git
-cd telegram-bot-api
-mkdir build && cd build
-cmake -DCMAKE_BUILD_TYPE=Release ..
-cmake --build . --target telegram-bot-api -j$(nproc)
+mkdir -p "$HOME/.config/raziel"
+cp config/ytbotrc_EXAMPLE.py "$HOME/.config/raziel/ytbotrc.py"
+chmod 600 "$HOME/.config/raziel/ytbotrc.py"
+export RAZIEL_CONFIG="$HOME/.config/raziel/ytbotrc.py"
 ```
 
----
+Raziel also preserves compatibility with the older sibling `../config/ytbotrc.py` deployment layout.
 
-### 🔑 Get API Credentials
+## 4. Runtime directory
 
-From Telegram:
+The example configuration stores runtime data under:
 
-* `api_id`
-* `api_hash`
+```text
+$HOME/.local/share/raziel
+```
 
----
+Raziel creates the needed `state`, `downloads`, `logs`, `done`, `watch`, and `cookies` subdirectories automatically.
 
-## 🥇 5. Run via systemd (Recommended)
+Keep this runtime directory outside version control.
 
-Create service:
+## 5. Run Raziel
 
 ```bash
-sudo nano /etc/systemd/system/telegram-bot-api.service
-```
-
-```ini
-[Unit]
-Description=Telegram Bot API (Local)
-After=network.target
-
-[Service]
-User=typezero
-WorkingDirectory=/mnt/nvme1/work/telegram-bot-api
-ExecStart=/home/typezero/src/telegram-bot-api/build/telegram-bot-api \
-  --api-id YOUR_API_ID \
-  --api-hash YOUR_API_HASH \
-  --local \
-  --http-port 8081 \
-  --dir /mnt/nvme1/work/telegram-bot-api
-
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable + start:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable telegram-bot-api
-sudo systemctl start telegram-bot-api
-```
-
----
-
-### 🔍 Verify
-
-```bash
-systemctl status telegram-bot-api
-```
-
-Logs:
-
-```bash
-journalctl -u telegram-bot-api -f
-```
-
----
-
-## 🥈 6. Optional: Start Script
-
-```bash
-nano ~/start-bot-api.sh
-```
-
-```bash
-#!/usr/bin/env bash
-
-~/src/telegram-bot-api/build/telegram-bot-api \
-  --api-id YOUR_API_ID \
-  --api-hash YOUR_API_HASH \
-  --local \
-  --http-port 8081 \
-  --dir /mnt/nvme1/work/telegram-bot-api
-```
-
-```bash
-chmod +x ~/start-bot-api.sh
-```
-
----
-
-## 🥉 7. Optional: Shell Aliases
-
-Add to:
-
-```bash
-~/.bash.d/aliases
-```
-
-```bash
-alias botapi="systemctl status telegram-bot-api"
-alias botapi-start="sudo systemctl start telegram-bot-api"
-alias botapi-stop="sudo systemctl stop telegram-bot-api"
-alias botapi-restart="sudo systemctl restart telegram-bot-api"
-alias botapi-log="journalctl -u telegram-bot-api -f"
-```
-
-Reload shell:
-
-```bash
-source ~/.bashrc
-```
-
----
-
-## ▶️ 8. Run YTBot
-
-```bash
-cd /mnt/nvme1/work/bots
-source venv/bin/activate
+source .venv/bin/activate
 python ytbot.py
 ```
 
----
-
-## 🧪 9. Test
-
-In Telegram:
-
-```text
-/dl https://youtu.be/kRPvE8CPub0
-```
-
-Expected:
-
-* Download starts
-* No timeout errors
-* Single upload (no duplicates)
-
----
-
-## ⚠️ Troubleshooting
-
-### ❌ Upload times out
-
-Check:
+If you use an external configuration:
 
 ```bash
-journalctl -u telegram-bot-api -f
+RAZIEL_CONFIG="$HOME/.config/raziel/ytbotrc.py" python ytbot.py
 ```
 
-Increase:
+## 6. Optional local Telegram Bot API
+
+Raziel can use a locally hosted Telegram Bot API endpoint for large-file workflows. This is optional; leave `LOCAL_BOT_API_URL` and `LOCAL_BOT_API_FILE_URL` empty if you are using Telegram's normal Bot API endpoints.
+
+When using a local Bot API server, obtain your Telegram `api_id` and `api_hash` through Telegram's official developer process and keep both values private.
+
+Example configuration:
 
 ```python
-TELEGRAM_UPLOAD_TIMEOUT = 3600
+LOCAL_BOT_API_URL = "http://127.0.0.1:8081/bot"
+LOCAL_BOT_API_FILE_URL = "http://127.0.0.1:8081/file/bot"
 ```
 
----
+The template files under `docs/etc/` and `docs/scripts/` contain placeholders only. Replace the placeholders locally; never commit your real API credentials.
 
-### ❌ yt-dlp fails
+## 7. Validation
+
+Check Python syntax:
 
 ```bash
-pip install -U yt-dlp
+python -m py_compile ytbot.py config/ytbotrc_EXAMPLE.py
 ```
 
----
-
-### ❌ ffmpeg missing
-:1
+Confirm FFmpeg tools are available:
 
 ```bash
-sudo pacman -S ffmpeg
+ffmpeg -version
+ffprobe -version
 ```
 
----
+Start Raziel and confirm `/start`, `/help`, `/status` (admin), and a test media command behave as expected in your intended Telegram chat.
 
-### ❌ Bot not responding
+## 8. Troubleshooting
 
-Check:
+### Missing config
+
+If Raziel reports that it cannot find its configuration, either create:
+
+```text
+config/ytbotrc.py
+```
+
+or set:
 
 ```bash
-systemctl status telegram-bot-api
+export RAZIEL_CONFIG="/absolute/path/to/ytbotrc.py"
 ```
 
----
+### yt-dlp extraction failures
 
-## ✅ Final Checklist
+Update the installed dependency in the active virtual environment:
 
-* [ ] Bot API running
-* [ ] ytbot config created
-* [ ] ffmpeg installed
-* [ ] venv active
-* [ ] bot starts without errors
+```bash
+python -m pip install --upgrade yt-dlp
+```
 
----
+Source-site changes can break individual extractors independently of Raziel.
 
-## 🧠 Notes
+### FFmpeg/ffprobe unavailable
 
-* Local Bot API removes 50MB limit
-* Uploads up to ~2GB supported
-* systemd ensures reliability
+Install FFmpeg through your operating system package manager and ensure both commands are available in `PATH`.
 
----
+### Upload timeout or size issues
 
-## 🚀 Result
+Check Raziel's logs and verify `TELEGRAM_UPLOAD_TIMEOUT`. For the large-file workflow, also verify that your local Telegram Bot API server is actually running and that Raziel's local API URLs match it.
 
-You now have:
+## Security checklist
 
-* persistent bot backend
-* large media pipeline
-* automated service startup
-* clean dev workflow
-
----
-
-**YTBot is now production-ready.**
-
+- [ ] Real bot token is not in Git.
+- [ ] Telegram API ID/hash are not in Git.
+- [ ] Cookie files are private and untracked.
+- [ ] Runtime logs/state/downloads are outside Git.
+- [ ] Access-control lists contain only intended users/admins.
+- [ ] Group auto-watch behavior is configured intentionally.
+- [ ] Telegram bot permissions/privacy settings match the features you intend to use.

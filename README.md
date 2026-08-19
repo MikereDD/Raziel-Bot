@@ -1,70 +1,75 @@
-# 🎬 Raziel (VideoBot)
-
-> A typezerø Project  
-> Built for real-world use, not perfection.
+# Raziel — Telegram Media Pipeline Bot
 
 ![Version](https://img.shields.io/badge/version-v6.9-blue)
-![Python](https://img.shields.io/badge/python-3.10+-blue)
-![License](https://img.shields.io/badge/license-WTFPL-lightgrey)
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
+![Platform](https://img.shields.io/badge/platform-Telegram-26A5E4)
+![Backend](https://img.shields.io/badge/media-yt--dlp-red)
+![Processing](https://img.shields.io/badge/processing-FFmpeg-black)
+![License](https://img.shields.io/badge/license-Typezer%E2%88%85%20All%20Rights%20Reserved-darkred)
 
----
+**Raziel** is a queue-driven Telegram bot for downloading, processing, routing, and reposting media with a quiet-first group-chat workflow. It combines `yt-dlp`, FFmpeg, Telegram commands, automatic link ingestion, reply-driven controls, persistent queue state, weather utilities, and optional local Telegram Bot API support for large uploads.
 
-# 🚀 Overview
+Raziel is designed to stay useful without becoming noisy: ordinary downloads favor concise captions and transient status messages, while richer source metadata is available on demand.
 
-Raziel is a Telegram-native media pipeline bot focused on:
+## Highlights
 
-- automatic media ingestion
-- intelligent queue handling
-- clean group interaction
-- metadata-aware uploads
-- low-noise Telegram UX
-- large-file support
-- operational reliability
-- smart media workflows
+- Persistent single-worker download queue with retry/failure tracking.
+- Video, HD, full-quality, audio, and clip workflows.
+- Automatic link ingestion in groups, with per-chat opt-out controls.
+- Reply-driven commands that preserve conversation context.
+- Quiet-first metadata architecture with explicit `*meta` commands.
+- Interactive quality-selection buttons through `/ui`.
+- yt-dlp-backed platform support with optional strict domain validation.
+- FFmpeg validation, clipping, audio extraction, and fallback compression.
+- Persistent deduplication and recent-history tracking.
+- Watch-folder and direct CLI ingestion.
+- Optional local Telegram Bot API support for large uploads.
+- Weather and forecast utilities powered by Open-Meteo.
+- Owner/admin controls for status, cleanup, queue management, reload, restart, and shutdown.
 
-Raziel accepts input from:
-
-- Telegram commands
-- pasted/shared links
-- forwarded links
-- watch folders
-- direct CLI execution
-
-Pipeline:
+## Media workflow
 
 ```text
-Input → Validate → Queue → Download → Process → Upload → Route → Archive
+Telegram / CLI / Watch Folder
+            │
+            ▼
+     Validate + Preflight
+            │
+            ▼
+       Persistent Queue
+            │
+            ▼
+         yt-dlp
+            │
+            ▼
+     FFmpeg Processing
+            │
+            ▼
+      Telegram Upload
+            │
+            ▼
+       Route / Archive
 ```
 
----
+Runtime data is kept outside the tracked source tree when `BASE_DIR` is configured accordingly. Raziel maintains state, downloads, logs, completed media, failures, cookies, and the watch folder beneath that runtime directory.
 
-# ✨ Features
+## Commands
 
-## 🧠 Core System
+### Download and media commands
 
-- Persistent queue architecture
-- Safe single-worker processing
-- Queue/job tracking
-- Access control support
-- Automatic retry handling
-- Runtime-safe operations
+| Command | Purpose |
+| --- | --- |
+| `/dl <url>` | Download using the configured default quality. |
+| `/hd <url>` | Download using the configured HD quality. |
+| `/full <url>` | Download the best available quality. |
+| `/audio <url>` | Extract/download audio. |
+| `/clip <url> <start> <end>` | Download and create a time-bounded clip. |
+| `/ui <url>` | Open interactive quality buttons. |
+| `/queue` | Show the current and pending queue. |
 
----
+### Reply-driven commands
 
-## 🤖 Telegram-Native UX
-
-- Automatic group link detection
-- Reply-thread aware downloads
-- Interactive quality UI
-- Mention-based interaction
-- Telegram inline utilities
-- Automatic queue cleanup
-- Low-noise group behavior
-- Expandable source-context presentation
-- Collapsible forecast presentation
-- Reply-driven download commands
-
-Reply commands:
+Reply to a message containing a media URL with:
 
 ```text
 /rdl
@@ -74,200 +79,207 @@ Reply commands:
 /rui
 ```
 
----
+Raziel keeps the resulting workflow attached to the original conversation whenever Telegram permits it.
 
-## 🎞️ Media Handling
+### Metadata-on-demand
 
-- yt-dlp backend
-- MP4-friendly workflows
-- Audio extraction
-- Clip support
-- Metadata-aware uploads
-- Smart format selection
-- Platform-aware upload branding
-- Source-context preservation
+The quiet-first commands above avoid unnecessary extra context. Use the metadata variants when you explicitly want source context:
 
-Supported platforms include:
+```text
+/dlmeta
+/hdmeta
+/fullmeta
+/audiometa
+/rdlmeta
+/rhdmeta
+/rfullmeta
+/raudiometa
+```
+
+### Utilities
+
+```text
+/weather <place>
+/forecast <place>
+/whoami
+/help
+```
+
+Raziel also supports its configured mention aliases for supported conversational utilities.
+
+### Administration
+
+Admin/owner commands include:
+
+```text
+/lastusers
+/stats
+/status
+/groups
+/cleanup
+/failures
+/retrylast
+/reload
+/restart
+/clearqueue
+/leave
+/leavechat
+/delete
+/del
+/rm
+/shutdown
+```
+
+## Supported sources
+
+Raziel uses `yt-dlp` as its extraction backend. Its built-in platform presets include:
 
 - YouTube
 - Instagram
-- TikTok
 - Reddit
-- X/Twitter
+- TikTok
+- X / Twitter
 - Facebook
 - BitChute
 
----
+By default, the example configuration enables YouTube and Instagram. Additional presets or one-off domains can be enabled in configuration. When `STRICT_PLATFORM_VALIDATION = False`, Raziel may pass other URLs to yt-dlp after media preflight instead of limiting input to the configured preset list.
 
-## 🧠 Intelligence Layer
+Availability is ultimately determined by the installed yt-dlp version and the source site. A listed platform is not a guarantee that every URL or protected/private item is downloadable.
 
-Raziel includes:
+## Requirements
 
-- persistent dedupe protection
-- metadata-aware uploads
-- expandable source-context handling
-- intelligent metadata filtering
-- reply-loop protection
-- configurable validation policy
-- Telegram-native UX systems
-- inline and mention interaction
-- collapsible forecast presentation
-- smart queue cleanup behavior
+- Python 3.10+
+- `python-telegram-bot` 22+
+- `yt-dlp`
+- FFmpeg / ffprobe available in `PATH`
+- Telegram bot token from BotFather
+- Optional: locally hosted Telegram Bot API for large-file workflows
 
----
+Install the Python dependencies with:
 
-## 🌦️ Weather & Utility Features
-
-- Current weather lookup
-- Multi-day forecasts
-- Expandable forecast presentation
-- Inline weather queries
-- Mention-driven utility interaction
-
-Examples:
-
-```text
-/weather Houston
-/forecast Tokyo
-@Razi3l_bot weather Houston
+```bash
+python -m pip install -r requirements.txt
 ```
 
----
+## Configuration
 
-## 🎛️ Interactive UI
+Copy the safe example and keep the real configuration untracked:
 
-```text
-/ui <url>
+```bash
+cp config/ytbotrc_EXAMPLE.py config/ytbotrc.py
 ```
 
-Supports:
+At minimum, configure:
 
-- 🎬 720p
-- 🎬 HD
-- 🎬 Full
-- 🎵 Audio
-
----
-
-## ✂️ Clip Support
-
-```text
-/clip <url> <start> <end>
+```python
+BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+ALLOWED_USER_ID = 123456789
 ```
 
-Features:
+The real `config/ytbotrc.py` is excluded by `.gitignore`.
 
-- ffmpeg-powered clipping
-- timestamp normalization
-- clip duration calculation
-- metadata-aware clip captions
+Raziel resolves configuration in this order:
 
----
+1. `RAZIEL_CONFIG`, when the environment variable points to a config file.
+2. `config/ytbotrc.py` inside the Raziel repository.
+3. The legacy sibling `../config/ytbotrc.py` location for existing deployments.
 
-## 📦 Smart Upload System
+For a private external configuration:
 
-- Large-file Telegram uploads
-- Local Telegram Bot API support
-- Extended upload timeout handling
-- Queue cleanup automation
-- Cleaner upload presentation
-- Reply-aware uploads
-
----
-
-## 🧵 Reply Behavior
-
-- Replies stay attached to original messages
-- Auto-detected links remain threaded
-- Queue behavior preserves conversation context
-- Reply-driven commands reduce repost clutter
-
----
-
-## 🔇 Clean Group Mode
-
-Raziel prioritizes:
-
-- reduced chat spam
-- temporary operational messages
-- clean scrolling behavior
-- readable uploads
-- meaningful metadata only
-
----
-
-## 📁 File Routing
-
-```text
-G:\bots\done\video\
-G:\bots\done\audio\
-G:\bots\done\failed\
+```bash
+export RAZIEL_CONFIG="$HOME/.config/raziel/ytbotrc.py"
+python ytbot.py
 ```
 
----
+See [`config/ytbotrc_EXAMPLE.py`](config/ytbotrc_EXAMPLE.py) and [`docs/SETUP.md`](docs/SETUP.md) for the full configuration and deployment notes.
 
-## 📡 Automation
+## Running Raziel
 
-Watch folder support:
+Interactive Telegram mode:
 
-```text
-G:\bots\watch
+```bash
+python ytbot.py
 ```
 
-CLI examples:
+Direct CLI download:
 
-```text
-python ytbot.py --url "<link>"
-python ytbot.py --audio "<link>"
+```bash
+python ytbot.py --url "https://example.com/media"
 ```
 
----
+Direct audio download:
 
-## 📊 Observability
-
-Commands:
-
-```text
-/stats
-/status
-/failures
-/retrylast
-/queue
+```bash
+python ytbot.py --audio "https://example.com/media"
 ```
 
----
+## Runtime directories
 
-# 📚 Notes & Version History
+`BASE_DIR` controls Raziel's runtime storage root. A typical configuration might be:
 
-Detailed release notes and architectural evolution:
-
-```text
-notes/README.md
+```python
+BASE_DIR = "$HOME/.local/share/raziel"
 ```
 
----
-
-# 📌 Philosophy
+Raziel creates and uses directories such as:
 
 ```text
-Make it work
-→ Make it better
-→ Make it clean
-→ Make it smart
-→ Make it disciplined
-→ Give control
+state/
+downloads/
+logs/
+done/video/
+done/audio/
+done/failed/
+watch/
+cookies/
 ```
 
----
+Do not commit runtime state, cookies, downloaded media, logs, or the live configuration.
 
-# 🧑‍💻 Author
+## Privacy and access model
 
-Mike Redd  
-typezerø Projects
+Raziel can inspect ordinary non-command messages because automatic link ingestion and mention handling depend on message content. This is different from a command-only Telegram bot.
 
----
+Access controls are configurable. Private-chat use can remain owner-restricted while group behavior is controlled through bot permissions, user/admin configuration, platform validation, and per-chat auto-watch overrides.
 
-# 📜 License
+Before deploying Raziel into a group, make sure participants understand the bot's automatic link behavior and configure Telegram/BotFather privacy settings consistently with the features you intend to use.
 
-WTFPL
+## Repository layout
 
+```text
+Raziel/
+├── config/
+│   └── ytbotrc_EXAMPLE.py
+├── docs/
+│   ├── ATTRIBUTION.md
+│   ├── SETUP.md
+│   └── ...
+├── notes/                  # historical implementation/version notes
+├── .gitignore
+├── CHANGELOG.md
+├── LICENSE.md
+├── README.md
+├── SECURITY.md
+├── requirements.txt
+└── ytbot.py
+```
+
+## Version history
+
+Raziel's detailed implementation history is preserved under [`notes/`](notes/README.md). The current public-facing changes are summarized in [`CHANGELOG.md`](CHANGELOG.md).
+
+## Responsible use
+
+Raziel is a media-management tool. Users are responsible for complying with copyright law, source-site terms, Telegram rules, and any other restrictions that apply to media they access, download, process, or redistribute.
+
+Raziel does not grant rights to third-party content merely because a source can technically be processed by yt-dlp.
+
+## Third-party software and services
+
+Raziel depends on or interoperates with projects and services that have their own licenses and terms, including Telegram, python-telegram-bot, yt-dlp, FFmpeg, and Open-Meteo. See [`docs/ATTRIBUTION.md`](docs/ATTRIBUTION.md).
+
+## License
+
+Copyright © 2026 **Typezer∅**. All rights reserved.
+
+Raziel's source is publicly viewable, but Raziel is **not open-source software** and is not released under a permissive or copyleft software license. See [`LICENSE.md`](LICENSE.md) for the complete source-code license notice.

@@ -1,6 +1,6 @@
 #--------------------------------------------
 # file:     ytbot.py
-# author:   Mike Redd
+# author:   Typezer∅
 # version:  6.9
 # created:  2026-04-18
 # updated:  2026-05-18
@@ -58,14 +58,37 @@ from telegram.request import HTTPXRequest
 
 # ── Private Config ──────────────────────────────────────────────────────────────
 APP_DIR = Path(__file__).resolve().parent
-ROOT_DIR = APP_DIR.parent
+LEGACY_ROOT_DIR = APP_DIR.parent
 
-CONFIG_DIR = ROOT_DIR / "config"
-CONFIG_FILE = CONFIG_DIR / "ytbotrc.py"
+# Config discovery order:
+#   1. RAZIEL_CONFIG environment variable
+#   2. Standalone repository config/ytbotrc.py
+#   3. Legacy sibling ../config/ytbotrc.py
+_config_override = os.environ.get("RAZIEL_CONFIG", "").strip()
+_config_candidates = []
 
-if not CONFIG_FILE.exists():
-    raise RuntimeError(f"Missing config file: {CONFIG_FILE}")
+if _config_override:
+    _config_candidates.append(
+        Path(os.path.expandvars(os.path.expanduser(_config_override))).resolve()
+    )
 
+_config_candidates.extend([
+    APP_DIR / "config" / "ytbotrc.py",
+    LEGACY_ROOT_DIR / "config" / "ytbotrc.py",
+])
+
+CONFIG_FILE = next((path for path in _config_candidates if path.is_file()), None)
+
+if CONFIG_FILE is None:
+    checked = "\n".join(f"  - {path}" for path in _config_candidates)
+    raise RuntimeError(
+        "Missing Raziel config file. Checked:\n"
+        f"{checked}\n"
+        "Copy config/ytbotrc_EXAMPLE.py to config/ytbotrc.py or set "
+        "RAZIEL_CONFIG to a private external config file."
+    )
+
+CONFIG_DIR = CONFIG_FILE.parent
 sys.path.insert(0, str(CONFIG_DIR))
 
 try:
@@ -76,7 +99,7 @@ except Exception as e:
 BOT_TOKEN = getattr(ytbotrc, "BOT_TOKEN", "")
 OWNER_ID = getattr(ytbotrc, "ALLOWED_USER_ID", 0)
 
-_configured_base = getattr(ytbotrc, "BASE_DIR", ROOT_DIR)
+_configured_base = getattr(ytbotrc, "BASE_DIR", APP_DIR / "runtime")
 BASE_DIR = Path(os.path.expandvars(os.path.expanduser(str(_configured_base)))).resolve()
 
 ADMIN_USERS = set(getattr(ytbotrc, "ADMIN_USERS", [OWNER_ID]) or [OWNER_ID])

@@ -1,0 +1,88 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging / builds
+build/
+dist/
+*.egg-info/
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Raziel private configuration
+config/ytbotrc.py
+.env
+.env.*
+!.env.example
+
+# Secrets / credentials / cookies
+cookies/
+*_cookies.txt
+*.cookie
+*.cookies
+*.pem
+*.key
+
+# Raziel runtime state
+state/
+downloads/
+logs/
+done/
+watch/
+known_chats.json
+queue.json
+history.json
+failures.json
+dedup.json
+*.log
+
+# Databases / transient files
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.tmp
+*.part
+*.ytdl
+
+# Downloaded media
+*.mp3
+*.m4a
+*.aac
+*.wav
+*.flac
+*.ogg
+*.opus
+*.mp4
+*.mkv
+*.webm
+*.mov
+*.avi
+
+# Local archives / backups
+*.zip
+*.7z
+*.tar
+*.tar.gz
+*.tgz
+*.bak
+*.old
