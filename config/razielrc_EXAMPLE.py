@@ -1,10 +1,10 @@
 #--------------------------------------------
-# file:     ytbotrc.py
+# file:     razielrc.py
 # author:   Typezer∅
 # version:  1.3
 # created:  2026-04-18
 # updated:  2026-05-03
-# desc:     Safe config template for ytbot
+# desc:     Safe config template for Raziel
 #--------------------------------------------
 
 # ── Required ─────────────────────────────────
@@ -104,7 +104,7 @@ ENABLED_VIDEO_PLATFORMS = (
 "instagram",
 )
 
-# Add one-off domains without editing ytbot.py.
+# Add one-off domains without editing raziel.py.
 EXTRA_VIDEO_DOMAINS = (
 # "example.com",
 )
@@ -133,4 +133,3 @@ LOCAL_BOT_API_FILE_URL = "http://127.0.0.1:8081/file/bot"
 # - Keep your real config outside version control.
 # - This file is safe as a template/example only.
 # - For large uploads, run the local Telegram Bot API service.
-

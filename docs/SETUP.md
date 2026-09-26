@@ -38,11 +38,11 @@ The `.venv/` directory is intentionally ignored by Git.
 For a simple local installation:
 
 ```bash
-cp config/ytbotrc_EXAMPLE.py config/ytbotrc.py
-chmod 600 config/ytbotrc.py
+cp config/razielrc_EXAMPLE.py config/razielrc.py
+chmod 600 config/razielrc.py
 ```
 
-Edit `config/ytbotrc.py` and set at least:
+Edit `config/razielrc.py` and set at least:
 
 ```python
 BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
@@ -55,9 +55,9 @@ For a config completely outside the repository:
 
 ```bash
 mkdir -p "$HOME/.config/raziel"
-cp config/ytbotrc_EXAMPLE.py "$HOME/.config/raziel/ytbotrc.py"
-chmod 600 "$HOME/.config/raziel/ytbotrc.py"
-export RAZIEL_CONFIG="$HOME/.config/raziel/ytbotrc.py"
+cp config/razielrc_EXAMPLE.py "$HOME/.config/raziel/razielrc.py"
+chmod 600 "$HOME/.config/raziel/razielrc.py"
+export RAZIEL_CONFIG="$HOME/.config/raziel/razielrc.py"
 ```
 
 Raziel also preserves compatibility with the older sibling `../config/ytbotrc.py` deployment layout.
@@ -78,13 +78,13 @@ Keep this runtime directory outside version control.
 
 ```bash
 source .venv/bin/activate
-python ytbot.py
+python raziel.py
 ```
 
 If you use an external configuration:
 
 ```bash
-RAZIEL_CONFIG="$HOME/.config/raziel/ytbotrc.py" python ytbot.py
+RAZIEL_CONFIG="$HOME/.config/raziel/razielrc.py" python raziel.py
 ```
 
 ## 6. Optional local Telegram Bot API
@@ -107,7 +107,7 @@ The template files under `docs/etc/` and `docs/scripts/` contain placeholders on
 Check Python syntax:
 
 ```bash
-python -m py_compile ytbot.py config/ytbotrc_EXAMPLE.py
+python -m py_compile raziel.py config/razielrc_EXAMPLE.py
 ```
 
 Confirm FFmpeg tools are available:
@@ -126,7 +126,7 @@ Start Raziel and confirm `/start`, `/help`, `/status` (admin), and a test media 
 If Raziel reports that it cannot find its configuration, either create:
 
 ```text
-config/ytbotrc.py
+config/razielrc.py
 ```
 
 or set:

@@ -1,5 +1,5 @@
 #--------------------------------------------
-# file:     ytbot.py
+# file:     raziel.py
 # author:   Typezer∅
 # version:  6.9
 # created:  2026-04-18
@@ -62,8 +62,10 @@ LEGACY_ROOT_DIR = APP_DIR.parent
 
 # Config discovery order:
 #   1. RAZIEL_CONFIG environment variable
-#   2. Standalone repository config/ytbotrc.py
-#   3. Legacy sibling ../config/ytbotrc.py
+#   2. Standalone repository config/razielrc.py
+#   3. Standalone legacy config/ytbotrc.py
+#   4. Legacy sibling ../config/razielrc.py
+#   5. Legacy sibling ../config/ytbotrc.py
 _config_override = os.environ.get("RAZIEL_CONFIG", "").strip()
 _config_candidates = []
 
@@ -73,7 +75,9 @@ if _config_override:
     )
 
 _config_candidates.extend([
+    APP_DIR / "config" / "razielrc.py",
     APP_DIR / "config" / "ytbotrc.py",
+    LEGACY_ROOT_DIR / "config" / "razielrc.py",
     LEGACY_ROOT_DIR / "config" / "ytbotrc.py",
 ])
 
@@ -84,7 +88,7 @@ if CONFIG_FILE is None:
     raise RuntimeError(
         "Missing Raziel config file. Checked:\n"
         f"{checked}\n"
-        "Copy config/ytbotrc_EXAMPLE.py to config/ytbotrc.py or set "
+        "Copy config/razielrc_EXAMPLE.py to config/razielrc.py or set "
         "RAZIEL_CONFIG to a private external config file."
     )
 
@@ -92,56 +96,63 @@ CONFIG_DIR = CONFIG_FILE.parent
 sys.path.insert(0, str(CONFIG_DIR))
 
 try:
-    import ytbotrc
+    import importlib.util
+
+    _config_spec = importlib.util.spec_from_file_location("razielrc", CONFIG_FILE)
+    if _config_spec is None or _config_spec.loader is None:
+        raise RuntimeError("Could not create an import specification.")
+
+    razielrc = importlib.util.module_from_spec(_config_spec)
+    _config_spec.loader.exec_module(razielrc)
 except Exception as e:
     raise RuntimeError(f"Failed to load config file {CONFIG_FILE}: {e}")
 
-BOT_TOKEN = getattr(ytbotrc, "BOT_TOKEN", "")
-OWNER_ID = getattr(ytbotrc, "ALLOWED_USER_ID", 0)
+BOT_TOKEN = getattr(razielrc, "BOT_TOKEN", "")
+OWNER_ID = getattr(razielrc, "ALLOWED_USER_ID", 0)
 
-_configured_base = getattr(ytbotrc, "BASE_DIR", APP_DIR / "runtime")
+_configured_base = getattr(razielrc, "BASE_DIR", APP_DIR / "runtime")
 BASE_DIR = Path(os.path.expandvars(os.path.expanduser(str(_configured_base)))).resolve()
 
-ADMIN_USERS = set(getattr(ytbotrc, "ADMIN_USERS", [OWNER_ID]) or [OWNER_ID])
-ALLOWED_USERS = set(getattr(ytbotrc, "ALLOWED_USERS", [OWNER_ID]) or [OWNER_ID])
-ALLOW_ALL_USERS = getattr(ytbotrc, "ALLOW_ALL_USERS", False)
-AUTO_WATCH_DISABLED_CHAT_IDS = set(getattr(ytbotrc, "AUTO_WATCH_DISABLED_CHAT_IDS", []))
+ADMIN_USERS = set(getattr(razielrc, "ADMIN_USERS", [OWNER_ID]) or [OWNER_ID])
+ALLOWED_USERS = set(getattr(razielrc, "ALLOWED_USERS", [OWNER_ID]) or [OWNER_ID])
+ALLOW_ALL_USERS = getattr(razielrc, "ALLOW_ALL_USERS", False)
+AUTO_WATCH_DISABLED_CHAT_IDS = set(getattr(razielrc, "AUTO_WATCH_DISABLED_CHAT_IDS", []))
 
-DOWNLOAD_TIMEOUT = getattr(ytbotrc, "DOWNLOAD_TIMEOUT", 3600)
-TELEGRAM_UPLOAD_TIMEOUT = getattr(ytbotrc, "TELEGRAM_UPLOAD_TIMEOUT", 3600)
-DEBUG_MODE = getattr(ytbotrc, "DEBUG_MODE", False)
-DEDUP_ENABLED = getattr(ytbotrc, "DEDUP_ENABLED", True)
-DEDUP_TTL_HOURS = getattr(ytbotrc, "DEDUP_TTL_HOURS", 24)
-MAX_VIDEO_HEIGHT = getattr(ytbotrc, "MAX_VIDEO_HEIGHT", 1080)
-PREFER_MP4 = getattr(ytbotrc, "PREFER_MP4", True)
+DOWNLOAD_TIMEOUT = getattr(razielrc, "DOWNLOAD_TIMEOUT", 3600)
+TELEGRAM_UPLOAD_TIMEOUT = getattr(razielrc, "TELEGRAM_UPLOAD_TIMEOUT", 3600)
+DEBUG_MODE = getattr(razielrc, "DEBUG_MODE", False)
+DEDUP_ENABLED = getattr(razielrc, "DEDUP_ENABLED", True)
+DEDUP_TTL_HOURS = getattr(razielrc, "DEDUP_TTL_HOURS", 24)
+MAX_VIDEO_HEIGHT = getattr(razielrc, "MAX_VIDEO_HEIGHT", 1080)
+PREFER_MP4 = getattr(razielrc, "PREFER_MP4", True)
 
 # Caption/context behavior:
 # expandable = clean media caption + full source context in expandable reply
 # caption    = legacy v6.0-style source text inside media caption
 # minimal    = title/uploader/platform/duration/source only
-CAPTION_METADATA_MODE = getattr(ytbotrc, "CAPTION_METADATA_MODE", "expandable")
-CAPTION_CONTEXT_MAX_CHARS = int(getattr(ytbotrc, "CAPTION_CONTEXT_MAX_CHARS", 3500))
-CAPTION_SKIP_LOW_VALUE_CONTEXT = getattr(ytbotrc, "CAPTION_SKIP_LOW_VALUE_CONTEXT", True)
-CAPTION_CONTEXT_MIN_MEANINGFUL_CHARS = int(getattr(ytbotrc, "CAPTION_CONTEXT_MIN_MEANINGFUL_CHARS", 60))
+CAPTION_METADATA_MODE = getattr(razielrc, "CAPTION_METADATA_MODE", "expandable")
+CAPTION_CONTEXT_MAX_CHARS = int(getattr(razielrc, "CAPTION_CONTEXT_MAX_CHARS", 3500))
+CAPTION_SKIP_LOW_VALUE_CONTEXT = getattr(razielrc, "CAPTION_SKIP_LOW_VALUE_CONTEXT", True)
+CAPTION_CONTEXT_MIN_MEANINGFUL_CHARS = int(getattr(razielrc, "CAPTION_CONTEXT_MIN_MEANINGFUL_CHARS", 60))
 
-FORECAST_COLLAPSE_DETAILS = getattr(ytbotrc, "FORECAST_COLLAPSE_DETAILS", True)
-FORECAST_VISIBLE_DAYS = int(getattr(ytbotrc, "FORECAST_VISIBLE_DAYS", 1))
-NOISE_MESSAGE_DELETE_SECONDS = int(getattr(ytbotrc, "NOISE_MESSAGE_DELETE_SECONDS", 12))
+FORECAST_COLLAPSE_DETAILS = getattr(razielrc, "FORECAST_COLLAPSE_DETAILS", True)
+FORECAST_VISIBLE_DAYS = int(getattr(razielrc, "FORECAST_VISIBLE_DAYS", 1))
+NOISE_MESSAGE_DELETE_SECONDS = int(getattr(razielrc, "NOISE_MESSAGE_DELETE_SECONDS", 12))
 
 # Validation policy:
 # True  = only allow configured ENABLED_VIDEO_PLATFORMS / EXTRA_VIDEO_DOMAINS
 # False = allow any URL and let yt-dlp decide if it can extract it
-STRICT_PLATFORM_VALIDATION = getattr(ytbotrc, "STRICT_PLATFORM_VALIDATION", False)
-MEDIA_PREFLIGHT_ENABLED = getattr(ytbotrc, "MEDIA_PREFLIGHT_ENABLED", True)
-MEDIA_PREFLIGHT_TIMEOUT = int(getattr(ytbotrc, "MEDIA_PREFLIGHT_TIMEOUT", 20))
-MEDIA_PREFLIGHT_NOISE_DELETE_SECONDS = int(getattr(ytbotrc, "MEDIA_PREFLIGHT_NOISE_DELETE_SECONDS", 8))
+STRICT_PLATFORM_VALIDATION = getattr(razielrc, "STRICT_PLATFORM_VALIDATION", False)
+MEDIA_PREFLIGHT_ENABLED = getattr(razielrc, "MEDIA_PREFLIGHT_ENABLED", True)
+MEDIA_PREFLIGHT_TIMEOUT = int(getattr(razielrc, "MEDIA_PREFLIGHT_TIMEOUT", 20))
+MEDIA_PREFLIGHT_NOISE_DELETE_SECONDS = int(getattr(razielrc, "MEDIA_PREFLIGHT_NOISE_DELETE_SECONDS", 8))
 
 # Local Telegram Bot API support (optional)
-LOCAL_BOT_API_URL = getattr(ytbotrc, "LOCAL_BOT_API_URL", "")
-LOCAL_BOT_API_FILE_URL = getattr(ytbotrc, "LOCAL_BOT_API_FILE_URL", "")
+LOCAL_BOT_API_URL = getattr(razielrc, "LOCAL_BOT_API_URL", "")
+LOCAL_BOT_API_FILE_URL = getattr(razielrc, "LOCAL_BOT_API_FILE_URL", "")
 
-DEFAULT_VIDEO_HEIGHT = getattr(ytbotrc, "DEFAULT_VIDEO_HEIGHT", 720)
-HD_VIDEO_HEIGHT = getattr(ytbotrc, "HD_VIDEO_HEIGHT", 1080)
+DEFAULT_VIDEO_HEIGHT = getattr(razielrc, "DEFAULT_VIDEO_HEIGHT", 720)
+HD_VIDEO_HEIGHT = getattr(razielrc, "HD_VIDEO_HEIGHT", 1080)
 VIDEO_PLATFORM_PRESETS = {
     "youtube": (
         "youtube.com",
@@ -179,7 +190,7 @@ VIDEO_PLATFORM_PRESETS = {
 }
 
 ENABLED_VIDEO_PLATFORMS = tuple(getattr(
-    ytbotrc,
+    razielrc,
     "ENABLED_VIDEO_PLATFORMS",
     (
         "youtube",
@@ -187,7 +198,7 @@ ENABLED_VIDEO_PLATFORMS = tuple(getattr(
     ),
 ))
 
-EXTRA_VIDEO_DOMAINS = tuple(getattr(ytbotrc, "EXTRA_VIDEO_DOMAINS", ()))
+EXTRA_VIDEO_DOMAINS = tuple(getattr(razielrc, "EXTRA_VIDEO_DOMAINS", ()))
 
 def build_supported_video_domains() -> tuple[str, ...]:
     domains: list[str] = []
@@ -213,9 +224,9 @@ def build_supported_video_domains() -> tuple[str, ...]:
     return tuple(cleaned)
 
 SUPPORTED_VIDEO_DOMAINS = build_supported_video_domains()
-ARCHIVE_CHAT_ID = getattr(ytbotrc, "ARCHIVE_CHAT_ID", None)
-WATCH_FOLDER_ENABLED = getattr(ytbotrc, "WATCH_FOLDER_ENABLED", True)
-WATCH_FOLDER_CHAT_ID = getattr(ytbotrc, "WATCH_FOLDER_CHAT_ID", None) or OWNER_ID
+ARCHIVE_CHAT_ID = getattr(razielrc, "ARCHIVE_CHAT_ID", None)
+WATCH_FOLDER_ENABLED = getattr(razielrc, "WATCH_FOLDER_ENABLED", True)
+WATCH_FOLDER_CHAT_ID = getattr(razielrc, "WATCH_FOLDER_CHAT_ID", None) or OWNER_ID
 
 if not BOT_TOKEN:
     raise RuntimeError(
@@ -244,7 +255,7 @@ QUEUE_FILE = STATE_DIR / "queue.json"
 HISTORY_FILE = STATE_DIR / "history.json"
 FAILURES_FILE = STATE_DIR / "failures.json"
 DEDUP_FILE = STATE_DIR / "dedup.json"
-LOG_FILE = LOG_DIR / "ytbot.log"
+LOG_FILE = LOG_DIR / "raziel.log"
 
 for d in [
     STATE_DIR, DOWNLOAD_DIR, LOG_DIR, DONE_VIDEO_DIR,
@@ -280,18 +291,18 @@ logging.basicConfig(
         logging.StreamHandler(sys.stdout),
     ],
 )
-log = logging.getLogger("ytbot")
+log = logging.getLogger("raziel")
 log.setLevel(logging.INFO if DEBUG_MODE else logging.WARNING)
 
 
 def reload_runtime_config() -> None:
     """
-    Reload ytbotrc.py and refresh runtime-safe settings.
+    Reload the selected Raziel config file and refresh runtime-safe settings.
 
     This does not restart the Telegram app, active downloads, queue worker,
     or persisted state. It only refreshes values that are safe to update live.
     """
-    global ytbotrc
+    global razielrc
     global ADMIN_USERS, ALLOWED_USERS, ALLOW_ALL_USERS, AUTO_WATCH_DISABLED_CHAT_IDS
     global DOWNLOAD_TIMEOUT, TELEGRAM_UPLOAD_TIMEOUT, DEBUG_MODE
     global DEDUP_ENABLED, DEDUP_TTL_HOURS, MAX_VIDEO_HEIGHT, PREFER_MP4
@@ -304,49 +315,56 @@ def reload_runtime_config() -> None:
     global ARCHIVE_CHAT_ID, WATCH_FOLDER_ENABLED, WATCH_FOLDER_CHAT_ID
 
     importlib.invalidate_caches()
-    ytbotrc = importlib.reload(ytbotrc)
 
-    ADMIN_USERS = set(getattr(ytbotrc, "ADMIN_USERS", [OWNER_ID]) or [OWNER_ID])
-    ALLOWED_USERS = set(getattr(ytbotrc, "ALLOWED_USERS", [OWNER_ID]) or [OWNER_ID])
-    ALLOW_ALL_USERS = getattr(ytbotrc, "ALLOW_ALL_USERS", False)
-    AUTO_WATCH_DISABLED_CHAT_IDS = set(getattr(ytbotrc, "AUTO_WATCH_DISABLED_CHAT_IDS", []))
+    _reload_spec = importlib.util.spec_from_file_location("razielrc", CONFIG_FILE)
+    if _reload_spec is None or _reload_spec.loader is None:
+        raise RuntimeError(f"Could not reload config file {CONFIG_FILE}.")
 
-    DOWNLOAD_TIMEOUT = getattr(ytbotrc, "DOWNLOAD_TIMEOUT", 3600)
-    TELEGRAM_UPLOAD_TIMEOUT = getattr(ytbotrc, "TELEGRAM_UPLOAD_TIMEOUT", 3600)
-    DEBUG_MODE = getattr(ytbotrc, "DEBUG_MODE", False)
-    DEDUP_ENABLED = getattr(ytbotrc, "DEDUP_ENABLED", True)
-    DEDUP_TTL_HOURS = getattr(ytbotrc, "DEDUP_TTL_HOURS", 24)
-    MAX_VIDEO_HEIGHT = getattr(ytbotrc, "MAX_VIDEO_HEIGHT", 1080)
-    PREFER_MP4 = getattr(ytbotrc, "PREFER_MP4", True)
-    CAPTION_METADATA_MODE = getattr(ytbotrc, "CAPTION_METADATA_MODE", "expandable")
-    CAPTION_CONTEXT_MAX_CHARS = int(getattr(ytbotrc, "CAPTION_CONTEXT_MAX_CHARS", 3500))
-    CAPTION_SKIP_LOW_VALUE_CONTEXT = getattr(ytbotrc, "CAPTION_SKIP_LOW_VALUE_CONTEXT", True)
-    CAPTION_CONTEXT_MIN_MEANINGFUL_CHARS = int(getattr(ytbotrc, "CAPTION_CONTEXT_MIN_MEANINGFUL_CHARS", 60))
-    STRICT_PLATFORM_VALIDATION = getattr(ytbotrc, "STRICT_PLATFORM_VALIDATION", False)
-    MEDIA_PREFLIGHT_ENABLED = getattr(ytbotrc, "MEDIA_PREFLIGHT_ENABLED", True)
-    MEDIA_PREFLIGHT_TIMEOUT = int(getattr(ytbotrc, "MEDIA_PREFLIGHT_TIMEOUT", 20))
-    MEDIA_PREFLIGHT_NOISE_DELETE_SECONDS = int(getattr(ytbotrc, "MEDIA_PREFLIGHT_NOISE_DELETE_SECONDS", 8))
+    _reloaded_config = importlib.util.module_from_spec(_reload_spec)
+    _reload_spec.loader.exec_module(_reloaded_config)
+    razielrc = _reloaded_config
 
-    LOCAL_BOT_API_URL = getattr(ytbotrc, "LOCAL_BOT_API_URL", "")
-    LOCAL_BOT_API_FILE_URL = getattr(ytbotrc, "LOCAL_BOT_API_FILE_URL", "")
+    ADMIN_USERS = set(getattr(razielrc, "ADMIN_USERS", [OWNER_ID]) or [OWNER_ID])
+    ALLOWED_USERS = set(getattr(razielrc, "ALLOWED_USERS", [OWNER_ID]) or [OWNER_ID])
+    ALLOW_ALL_USERS = getattr(razielrc, "ALLOW_ALL_USERS", False)
+    AUTO_WATCH_DISABLED_CHAT_IDS = set(getattr(razielrc, "AUTO_WATCH_DISABLED_CHAT_IDS", []))
 
-    DEFAULT_VIDEO_HEIGHT = getattr(ytbotrc, "DEFAULT_VIDEO_HEIGHT", 720)
-    HD_VIDEO_HEIGHT = getattr(ytbotrc, "HD_VIDEO_HEIGHT", 1080)
+    DOWNLOAD_TIMEOUT = getattr(razielrc, "DOWNLOAD_TIMEOUT", 3600)
+    TELEGRAM_UPLOAD_TIMEOUT = getattr(razielrc, "TELEGRAM_UPLOAD_TIMEOUT", 3600)
+    DEBUG_MODE = getattr(razielrc, "DEBUG_MODE", False)
+    DEDUP_ENABLED = getattr(razielrc, "DEDUP_ENABLED", True)
+    DEDUP_TTL_HOURS = getattr(razielrc, "DEDUP_TTL_HOURS", 24)
+    MAX_VIDEO_HEIGHT = getattr(razielrc, "MAX_VIDEO_HEIGHT", 1080)
+    PREFER_MP4 = getattr(razielrc, "PREFER_MP4", True)
+    CAPTION_METADATA_MODE = getattr(razielrc, "CAPTION_METADATA_MODE", "expandable")
+    CAPTION_CONTEXT_MAX_CHARS = int(getattr(razielrc, "CAPTION_CONTEXT_MAX_CHARS", 3500))
+    CAPTION_SKIP_LOW_VALUE_CONTEXT = getattr(razielrc, "CAPTION_SKIP_LOW_VALUE_CONTEXT", True)
+    CAPTION_CONTEXT_MIN_MEANINGFUL_CHARS = int(getattr(razielrc, "CAPTION_CONTEXT_MIN_MEANINGFUL_CHARS", 60))
+    STRICT_PLATFORM_VALIDATION = getattr(razielrc, "STRICT_PLATFORM_VALIDATION", False)
+    MEDIA_PREFLIGHT_ENABLED = getattr(razielrc, "MEDIA_PREFLIGHT_ENABLED", True)
+    MEDIA_PREFLIGHT_TIMEOUT = int(getattr(razielrc, "MEDIA_PREFLIGHT_TIMEOUT", 20))
+    MEDIA_PREFLIGHT_NOISE_DELETE_SECONDS = int(getattr(razielrc, "MEDIA_PREFLIGHT_NOISE_DELETE_SECONDS", 8))
+
+    LOCAL_BOT_API_URL = getattr(razielrc, "LOCAL_BOT_API_URL", "")
+    LOCAL_BOT_API_FILE_URL = getattr(razielrc, "LOCAL_BOT_API_FILE_URL", "")
+
+    DEFAULT_VIDEO_HEIGHT = getattr(razielrc, "DEFAULT_VIDEO_HEIGHT", 720)
+    HD_VIDEO_HEIGHT = getattr(razielrc, "HD_VIDEO_HEIGHT", 1080)
 
     ENABLED_VIDEO_PLATFORMS = tuple(getattr(
-        ytbotrc,
+        razielrc,
         "ENABLED_VIDEO_PLATFORMS",
         (
             "youtube",
             "instagram",
         ),
     ))
-    EXTRA_VIDEO_DOMAINS = tuple(getattr(ytbotrc, "EXTRA_VIDEO_DOMAINS", ()))
+    EXTRA_VIDEO_DOMAINS = tuple(getattr(razielrc, "EXTRA_VIDEO_DOMAINS", ()))
     SUPPORTED_VIDEO_DOMAINS = build_supported_video_domains()
 
-    ARCHIVE_CHAT_ID = getattr(ytbotrc, "ARCHIVE_CHAT_ID", None)
-    WATCH_FOLDER_ENABLED = getattr(ytbotrc, "WATCH_FOLDER_ENABLED", True)
-    WATCH_FOLDER_CHAT_ID = getattr(ytbotrc, "WATCH_FOLDER_CHAT_ID", None) or OWNER_ID
+    ARCHIVE_CHAT_ID = getattr(razielrc, "ARCHIVE_CHAT_ID", None)
+    WATCH_FOLDER_ENABLED = getattr(razielrc, "WATCH_FOLDER_ENABLED", True)
+    WATCH_FOLDER_CHAT_ID = getattr(razielrc, "WATCH_FOLDER_CHAT_ID", None) or OWNER_ID
 
     log.setLevel(logging.INFO if DEBUG_MODE else logging.WARNING)
 
@@ -1149,7 +1167,7 @@ def get_bot_mention_names() -> set[str]:
     """
     Names that should wake Raziel in normal chat messages.
 
-    Deployment-specific Telegram usernames belong in ytbotrc.py, not here.
+    Deployment-specific Telegram usernames belong in razielrc.py, not here.
 
     Config options:
     BOT_USERNAME = "Razi3l_bot"
@@ -1166,14 +1184,14 @@ def get_bot_mention_names() -> set[str]:
         f"@{BOT_NAME.lower()}",
     }
 
-    bot_username = getattr(ytbotrc, "BOT_USERNAME", "")
+    bot_username = getattr(razielrc, "BOT_USERNAME", "")
     if bot_username:
         username = str(bot_username).strip().lower().lstrip("@")
         if username:
             names.add(username)
             names.add(f"@{username}")
 
-    configured = getattr(ytbotrc, "BOT_MENTION_ALIASES", ())
+    configured = getattr(razielrc, "BOT_MENTION_ALIASES", ())
     for item in configured or ():
         name = str(item).strip().lower()
         if not name:
@@ -1800,7 +1818,7 @@ def log_startup_checks() -> None:
     log.info("Supported video domains: %s", SUPPORTED_VIDEO_DOMAINS)
     log.info("Auto-watch disabled chat IDs: %s", sorted(AUTO_WATCH_DISABLED_CHAT_IDS))
 
-    allowed_chat_ids = set(getattr(ytbotrc, "ALLOWED_CHAT_IDS", []))
+    allowed_chat_ids = set(getattr(razielrc, "ALLOWED_CHAT_IDS", []))
     if allowed_chat_ids:
         log.info(
             "Group auto-watch is enabled for all groups/supergroups. "
@@ -3552,7 +3570,7 @@ async def status_cmd(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_admin(update.effective_user.id):
         return
 
-    allowed_chat_ids = set(getattr(ytbotrc, "ALLOWED_CHAT_IDS", []))
+    allowed_chat_ids = set(getattr(razielrc, "ALLOWED_CHAT_IDS", []))
 
     await update.message.reply_text(
         f"*Bot Status:* online\n"
@@ -4270,7 +4288,7 @@ def main() -> None:
     if not SUPPORTED_VIDEO_DOMAINS:
         log.warning(
             "No supported video domains are enabled. "
-            "Set ENABLED_VIDEO_PLATFORMS or EXTRA_VIDEO_DOMAINS in ytbotrc.py."
+            "Set ENABLED_VIDEO_PLATFORMS or EXTRA_VIDEO_DOMAINS in razielrc.py."
         )
     log_startup_checks()
     app.run_polling()
