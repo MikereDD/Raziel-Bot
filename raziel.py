@@ -36,6 +36,7 @@ BOT_NAME = "Raziel"
 BOT_VERSION = "6.9"
 
 import yt_dlp
+from raziel_synopsis import SynopsisError, build_synopsis_for_url
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -3124,6 +3125,8 @@ USER_COMMAND_LIST = (
     "/hd <url>      — queue HD video download (1080p)\n"
     "/full <url>    — queue best available video download\n"
     "/audio <url>   — queue audio download\n"
+    "/synopsis <url> — summarize video captions\n"
+    "/rsynopsis     — summarize replied-to video link\n"
     "/clip <url> <start> <end> — queue clipped video\n"
     "/ui <url>      — preview with buttons\n"
         "/rdl          — reply-download default video\n"
@@ -3940,6 +3943,77 @@ async def handle_url(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
     save_queue_state()
 
 
+
+# ── Synopsis Commands ───────────────────────────────────────────────────────────
+
+async def _run_synopsis_for_url(message, url: str) -> None:
+    if not is_supported_video_url(url):
+        await send_temporary_reply(message, "❌ Unsupported or invalid media URL.")
+        return
+
+    status = await message.reply_text("📝 Building synopsis from captions…")
+
+    try:
+        cookie_file = YOUTUBE_COOKIES_FILE if YOUTUBE_COOKIES_FILE.is_file() else None
+        result = await asyncio.to_thread(
+            build_synopsis_for_url,
+            url,
+            cookie_file=cookie_file,
+        )
+        await status.edit_text(result)
+    except SynopsisError as exc:
+        await status.edit_text(f"❌ {str(exc)[:3600]}")
+    except Exception as exc:
+        log.exception("Synopsis command failed for %s", url)
+        await status.edit_text(f"❌ Synopsis failed: {str(exc)[:1000]}")
+
+
+async def synopsis_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    chat = update.effective_chat
+    user = update.effective_user
+
+    if not message or not chat or not user:
+        return
+
+    if not can_use_context(user.id, chat.id, chat.type):
+        return
+
+    url = extract_url(" ".join(context.args)) if context.args else None
+    if not url:
+        await send_temporary_reply(
+            message,
+            "Usage: /synopsis https://example.com/video",
+        )
+        return
+
+    remember_chat(chat)
+    await _run_synopsis_for_url(message, url)
+
+
+async def rsynopsis_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    chat = update.effective_chat
+    user = update.effective_user
+
+    if not message or not chat or not user:
+        return
+
+    if not can_use_context(user.id, chat.id, chat.type):
+        return
+
+    url = extract_reply_target_url(message)
+    if not url:
+        await send_temporary_reply(
+            message,
+            "❌ No URL found in the replied message.",
+        )
+        return
+
+    remember_chat(chat)
+    await _run_synopsis_for_url(message, url)
+    asyncio.create_task(delete_command_message_later(message))
+
 # ── CLI mode ────────────────────────────────────────────────────────────────────
 def run_cli(url: str, mode: str = "video") -> None:
     print(f"Downloading {mode}: {url}")
@@ -4059,6 +4133,10 @@ def build_app():
     app.add_handler(CommandHandler("rhdmeta", rhdmeta_cmd))
     app.add_handler(CommandHandler("rfullmeta", rfullmeta_cmd))
     app.add_handler(CommandHandler("raudiometa", raudiometa_cmd))
+
+    # ── Caption-first synopsis ───────────────────────────────
+    app.add_handler(CommandHandler("synopsis", synopsis_cmd))
+    app.add_handler(CommandHandler("rsynopsis", rsynopsis_cmd))
     app.add_handler(CommandHandler("clip", clip_cmd))
     app.add_handler(CommandHandler("ui", ui_cmd))
     app.add_handler(CommandHandler("queue", queue_cmd))
