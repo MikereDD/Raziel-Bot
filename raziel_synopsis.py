@@ -13,6 +13,7 @@ from difflib import SequenceMatcher
 from html import unescape
 import json
 import math
+import os
 import re
 from pathlib import Path
 from typing import Protocol
@@ -572,13 +573,267 @@ class ExtractiveSummarizer:
 
         return summary.strip()
 
+
+class QwenSummarizer:
+    """Local abstractive summarizer backed by a persistent llama.cpp server."""
+
+    chunk_chars = 3500
+
+    def __init__(
+        self,
+        *,
+        api_url: str = "http://127.0.0.1:8082/v1/chat/completions",
+        health_url: str = "http://127.0.0.1:8082/health",
+        model: str = "default",
+        timeout: int = 120,
+    ):
+        self.api_url = api_url
+        self.health_url = health_url
+        self.model = model
+        self.timeout = timeout
+
+    @classmethod
+    def from_environment(cls) -> "QwenSummarizer":
+        return cls(
+            api_url=os.environ.get(
+                "RAZIEL_LLM_URL",
+                "http://127.0.0.1:8082/v1/chat/completions",
+            ),
+            health_url=os.environ.get(
+                "RAZIEL_LLM_HEALTH_URL",
+                "http://127.0.0.1:8082/health",
+            ),
+            model=os.environ.get("RAZIEL_LLM_MODEL", "default"),
+            timeout=int(os.environ.get("RAZIEL_LLM_TIMEOUT", "120")),
+        )
+
+    def is_available(self) -> bool:
+        request = Request(
+            self.health_url,
+            headers={"User-Agent": "Raziel/6.9"},
+        )
+        try:
+            with urlopen(request, timeout=2) as response:
+                return 200 <= int(response.status) < 300
+        except Exception:
+            return False
+
+    @staticmethod
+    def _normalize_bullets(text: str, *, max_points: int) -> str:
+        text = re.sub(
+            r"<think>.*?</think>",
+            "",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        text = text.replace("[Start thinking]", "").replace("[End thinking]", "")
+        text = text.strip()
+
+        bullets: list[str] = []
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            line = re.sub(r"^(?:[-*•]+|\d+[.)])\s*", "", line).strip()
+            if not line:
+                continue
+
+            if len(line) > 320:
+                line = line[:320].rsplit(" ", 1)[0].rstrip() + "…"
+
+            bullets.append(f"• {line}")
+            if len(bullets) >= max_points:
+                break
+
+        if not bullets:
+            raise SynopsisError("Local LLM returned no usable summary text.")
+
+        return "\n".join(bullets)
+
+    def _complete(self, prompt: str, *, max_tokens: int) -> str:
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "/no_think\n" + prompt,
+                }
+            ],
+            "temperature": 0.2,
+            "top_p": 0.9,
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+
+        request = Request(
+            self.api_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "Raziel/6.9",
+            },
+            method="POST",
+        )
+
+        try:
+            with urlopen(request, timeout=self.timeout) as response:
+                raw = response.read().decode("utf-8", errors="replace")
+        except Exception as exc:
+            raise SynopsisError(f"Local LLM request failed: {exc}") from exc
+
+        try:
+            data = json.loads(raw)
+            content = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+            raise SynopsisError("Local LLM returned an unexpected response.") from exc
+
+        content = str(content or "").strip()
+        if not content:
+            raise SynopsisError("Local LLM returned an empty response.")
+
+        return content
+
+    def summarize(self, text: str, *, title: str = "") -> str:
+        prompt = f"""Summarize this transcript excerpt in 3 concise, non-redundant bullet points.
+
+Video title: {title}
+
+Rules:
+- Use only information explicitly stated in the transcript.
+- Do not add outside knowledge.
+- Do not turn opinions, allegations, estimates, or interpretations into established facts.
+- Attribute claims using wording such as "The video says", "The speaker says", "The video argues", or "The transcript describes".
+- Do not repeat the same point.
+- Return only the bullet points.
+
+Transcript excerpt:
+{text}
+"""
+        # Synopsis prompt refinement v1.3
+        prompt += (
+            "\n\nAdditional accuracy rules:\n"
+            "- Prefer concrete names, systems, organizations, places, and actions when they are explicitly present in the source. "
+            "Do not replace a named subject with vague wording such as 'a country', 'the situation', or 'the conflict' unless the source itself is vague.\n"
+            "- Preserve attribution for claims, allegations, accusations, estimates, interpretations, opinions, predictions, and moral judgments. "
+            "Use wording such as 'The video says', 'The speaker argues', 'The transcript describes', or 'According to the speaker' when appropriate.\n"
+            "- Never convert words such as alleged, claimed, reported, suggested, estimated, or argued into an unqualified factual statement.\n"
+            "- Do not introduce new moral, emotional, legal, or political conclusions that are not explicitly supported by the supplied transcript chunk.\n"
+            "- Keep each bullet focused on what the source communicates, not on what you independently conclude from it."
+        )
+        # Synopsis prompt refinement v1.4
+        prompt += (
+            "\n\nStrict source-faithfulness rules:\n"
+            "- Treat the transcript as a source to summarize, not as verified truth.\n"
+            "- For disputed, political, military, legal, casualty, accuracy, motive, or responsibility claims, use explicit source attribution in the bullet itself.\n"
+            "- Numerical claims must keep their source framing. Use wording such as 'The transcript says...', 'The speaker cites...', or 'The IDF is described as claiming...'; do not present the number as independently established.\n"
+            "- Avoid verbs that imply independent verification, including 'reveals', 'proves', 'confirms', 'demonstrates', and 'establishes'. Prefer 'describes', 'says', 'argues', 'claims', 'reports', or 'discusses'.\n"
+            "- Do not infer causation, intent, systemic conclusions, or the absence of systemic problems unless the supplied text explicitly states that exact conclusion.\n"
+            "- If the text contains competing claims, summarize them as competing claims rather than resolving the dispute."
+        )
+        result = self._complete(prompt, max_tokens=320)
+        return self._normalize_bullets(result, max_points=3)
+
+    def summarize_final(self, text: str, *, title: str = "") -> str:
+        prompt = f"""Create the final synopsis for this video from the chunk summaries below.
+
+Video title: {title}
+
+Return exactly 5 concise, non-redundant bullet points.
+
+Rules:
+- Use only information present in the supplied chunk summaries.
+- Do not add outside knowledge.
+- Preserve attribution for claims, opinions, allegations, estimates, and interpretations.
+- Do not strengthen uncertain language into established fact.
+- Prefer the most important distinct points across the whole video.
+- Return only the bullet points.
+
+Chunk summaries:
+{text}
+"""
+        # Synopsis prompt refinement v1.3
+        prompt += (
+            "\n\nFinal-reduction accuracy rules:\n"
+            "- Produce exactly 5 bullets when the supplied material supports 5 distinct points.\n"
+            "- Prefer five distinct major topics from across the supplied chunk summaries; avoid spending multiple bullets on the same theme unless it dominates the source.\n"
+            "- Keep concrete names, systems, organizations, places, and actions when they are available. Avoid vague substitutions for named subjects.\n"
+            "- Preserve every important qualifier and attribution from the chunk summaries. If a point was presented as a claim, allegation, argument, estimate, interpretation, or opinion, keep it framed that way.\n"
+            "- Never strengthen uncertainty: alleged/claimed/reported/suggested/estimated/argued must not become an unqualified fact.\n"
+            "- Do not add outside knowledge or new moral, emotional, legal, or political framing.\n"
+            "- When necessary for accuracy, explicitly write 'The video says', 'The speaker argues', 'The transcript describes', or similar source-attribution language."
+        )
+        # Synopsis prompt refinement v1.4
+        prompt += (
+            "\n\nStrict final-output rules:\n"
+            "- Every bullet must make clear that it is summarizing the video, speaker, transcript, or a named source; do not write contested claims in Raziel's own voice.\n"
+            "- Preserve attribution on all casualty figures, accuracy percentages, allegations of misconduct, legal claims, political interpretations, military claims, and claims about responsibility or motive.\n"
+            "- Never use 'reveals', 'proves', 'confirms', 'demonstrates', or 'establishes' for a contested claim. Use neutral source-reporting verbs instead.\n"
+            "- Do not add conclusions such as 'not a systemic issue', 'systemic', 'intentional', 'caused by', or similar unless that conclusion appears explicitly in the supplied summaries and is itself attributed.\n"
+            "- If two supplied summaries conflict or appear ambiguous, preserve the ambiguity instead of reconciling them.\n"
+            "- Prefer factual wording about what the video discusses over rhetorical or emotionally intensified wording."
+        )
+        # Synopsis prompt refinement v1.5
+        prompt += (
+            "\n\nCoverage and deduplication rules:\n"
+            "- Produce five bullets that cover five distinct major topics when the supplied material contains enough distinct topics.\n"
+            "- Prefer coverage from different portions of the video rather than clustering around one event or one section.\n"
+            "- Do not use more than two bullets for the same event, incident, allegation, system, or theme unless the source is overwhelmingly about that single topic.\n"
+            "- If two candidate bullets substantially overlap, keep the broader or more informative one and use the freed bullet for a different major topic.\n"
+            "- Prioritize major themes over repeated details from the same story.\n"
+            "- Keep all prior source-attribution, uncertainty, and neutrality rules unchanged."
+        )
+        # Synopsis prompt refinement v1.6
+        prompt += (
+            "\n\nFinal attribution and topic-separation rules:\n"
+            "- Every final bullet must begin with explicit source attribution such as 'The video says...', 'The speaker argues...', 'The transcript describes...', or a named source followed by 'says/claims/argues/reports'.\n"
+            "- Do not begin a final bullet with an unqualified contested statement.\n"
+            "- Keep all prior uncertainty, neutrality, numerical-attribution, coverage, and deduplication rules unchanged.\n"
+            "- Do not combine two unrelated topics in one bullet merely to fill the five-bullet target.\n"
+            "- If a candidate bullet contains two unrelated claims, keep the more important one and use another distinct supported topic for the remaining bullet.\n"
+            "- Prefer one coherent subject per bullet."
+        )
+        # Synopsis prompt refinement v1.7
+        prompt += (
+            "\n\nInternal-attribution hardening rules:\n"
+            "- Attribution must remain clear throughout each bullet, not only in the opening words.\n"
+            "- When a bullet contains causal, legal, systemic, responsibility, motive, or prosecution claims, explicitly attribute those clauses too rather than presenting them as independent conclusions.\n"
+            "- Use phrasing such as 'the video argues that...', 'the speaker says this leads to...', 'the transcript describes this as...', or 'according to the source...' inside the bullet when needed.\n"
+            "- Do not state that something causes, proves, exposes, exempts, constitutes, or demonstrates a systemic pattern unless the source itself is explicitly framed as making that claim.\n"
+            "- Preserve all prior attribution, uncertainty, neutrality, coverage, and deduplication rules unchanged.\n"
+            "- Keep each bullet concise even when adding internal attribution."
+        )
+        # Synopsis prompt refinement v1.8
+        prompt += (
+            "\n\nSelection-not-synthesis rules:\n"
+            "- Treat the supplied chunk summaries as candidate source bullets to select and lightly rewrite, not as material to combine into new conclusions.\n"
+            "- Each final bullet must correspond primarily to one supplied chunk-summary idea.\n"
+            "- Do not invent causal links, contrasts, timelines, motivations, or relationships between separate chunk summaries.\n"
+            "- Do not merge separate claims merely because they share a subject, location, person, organization, or theme.\n"
+            "- Prefer preserving the clearest supported wording from a chunk summary over generating a more elegant but broader synthesis.\n"
+            "- If a source detail is ambiguous, awkward, or incomplete, keep the ambiguity rather than resolving it with inference.\n"
+            "- If two candidate summaries conflict, do not reconcile them; choose one major point or describe the disagreement with attribution.\n"
+            "- Keep one coherent source idea per bullet and preserve all prior attribution, uncertainty, neutrality, coverage, and deduplication rules."
+        )
+        result = self._complete(prompt, max_tokens=520)
+        return self._normalize_bullets(result, max_points=5)
+
+
+def _default_summarizer() -> Summarizer:
+    qwen = QwenSummarizer.from_environment()
+    if qwen.is_available():
+        return qwen
+    return ExtractiveSummarizer()
+
+
 def summarize_chunked(
     transcript: str,
     *,
     title: str,
     summarizer: Summarizer,
 ) -> str:
-    chunks = chunk_transcript(transcript)
+    chunk_chars = int(getattr(summarizer, "chunk_chars", 9000))
+    chunks = chunk_transcript(transcript, max_chars=chunk_chars)
 
     if len(chunks) <= 1:
         return summarizer.summarize(transcript, title=title)
@@ -588,13 +843,17 @@ def summarize_chunked(
         for chunk in chunks
     ]
 
-    # Strip bullet markers before the second-pass selector.
     combined = " ".join(
         line.lstrip("• ").strip()
         for summary in chunk_summaries
         for line in summary.splitlines()
         if line.strip()
     )
+
+    finalizer = getattr(summarizer, "summarize_final", None)
+    if callable(finalizer):
+        return finalizer(combined, title=title)
+
     return summarizer.summarize(combined, title=title)
 
 
@@ -663,12 +922,24 @@ def build_synopsis_for_url(
     )
     duration = info.get("duration")
 
-    backend = summarizer or ExtractiveSummarizer()
-    synopsis = summarize_chunked(
-        transcript,
-        title=title,
-        summarizer=backend,
-    )
+    backend = summarizer or _default_summarizer()
+
+    try:
+        synopsis = summarize_chunked(
+            transcript,
+            title=title,
+            summarizer=backend,
+        )
+    except SynopsisError:
+        if summarizer is not None:
+            raise
+
+        backend = ExtractiveSummarizer()
+        synopsis = summarize_chunked(
+            transcript,
+            title=title,
+            summarizer=backend,
+        )
 
     result = SynopsisResult(
         title=title,

@@ -45,6 +45,7 @@ from telegram import (
     Update,
 )
 from telegram.constants import ParseMode
+from telegram.error import BadRequest
 from telegram.ext import (
     ApplicationBuilder,
     CallbackQueryHandler,
@@ -56,6 +57,36 @@ from telegram.ext import (
     filters,
 )
 from telegram.request import HTTPXRequest
+
+# ── Background Task / Inline Query Helpers ─────────────────────────────────────
+BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def start_background_task(coro) -> None:
+    task = asyncio.create_task(coro)
+    BACKGROUND_TASKS.add(task)
+    task.add_done_callback(BACKGROUND_TASKS.discard)
+
+
+async def answer_inline_query_safely(
+    query,
+    results,
+    *,
+    cache_time: int,
+) -> None:
+    try:
+        await query.answer(results, cache_time=cache_time, is_personal=True)
+    except BadRequest as exc:
+        message = str(exc).lower()
+        if (
+            "query is too old" in message
+            or "response timeout expired" in message
+            or "query id is invalid" in message
+        ):
+            log.debug("Ignoring expired inline query: %s", exc)
+            return
+        raise
+
 
 # ── Private Config ──────────────────────────────────────────────────────────────
 APP_DIR = Path(__file__).resolve().parent
@@ -1507,7 +1538,7 @@ async def inline_query_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> No
             )
         )
 
-        await query.answer(results, cache_time=5, is_personal=True)
+        await answer_inline_query_safely(query, results, cache_time=5)
         return
 
     command, args = parsed
@@ -1535,7 +1566,7 @@ async def inline_query_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> No
             )
         )
 
-        await query.answer(results, cache_time=5, is_personal=True)
+        await answer_inline_query_safely(query, results, cache_time=5)
         return
 
     if not args:
@@ -1548,7 +1579,7 @@ async def inline_query_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> No
                 input_message_content=InputTextMessageContent(usage),
             )
         )
-        await query.answer(results, cache_time=5, is_personal=True)
+        await answer_inline_query_safely(query, results, cache_time=5)
         return
 
     try:
@@ -1586,7 +1617,7 @@ async def inline_query_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> No
             )
         )
 
-    await query.answer(results, cache_time=30, is_personal=True)
+    await answer_inline_query_safely(query, results, cache_time=30)
 
 
 
@@ -3988,7 +4019,7 @@ async def synopsis_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     remember_chat(chat)
-    await _run_synopsis_for_url(message, url)
+    start_background_task(_run_synopsis_for_url(message, url))
 
 
 async def rsynopsis_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -4011,7 +4042,7 @@ async def rsynopsis_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     remember_chat(chat)
-    await _run_synopsis_for_url(message, url)
+    start_background_task(_run_synopsis_for_url(message, url))
     asyncio.create_task(delete_command_message_later(message))
 
 # ── CLI mode ────────────────────────────────────────────────────────────────────
