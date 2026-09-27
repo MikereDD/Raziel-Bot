@@ -815,6 +815,14 @@ Chunk summaries:
             "- If two candidate summaries conflict, do not reconcile them; choose one major point or describe the disagreement with attribution.\n"
             "- Keep one coherent source idea per bullet and preserve all prior attribution, uncertainty, neutrality, coverage, and deduplication rules."
         )
+        # Synopsis cosmetic paraphrase rule v1
+        prompt += (
+            "\n\nParaphrase formatting rule:\n"
+            "- These bullets are summaries, not verbatim quotations. Do not wrap paraphrased bullet text in quotation marks.\n"
+            "- Use quotation marks only for a short phrase that is explicitly presented as a direct quote in the supplied source material.\n"
+            "- Prefer: The video says that Gospel automates target selection.\n"
+            "- Avoid: The video says, \"Gospel automates target selection.\""
+        )
         result = self._complete(prompt, max_tokens=520)
         return self._normalize_bullets(result, max_points=5)
 
