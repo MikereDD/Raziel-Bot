@@ -1,0 +1,20 @@
+[Unit]
+Description=Raziel local Qwen llama.cpp server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=YOUR_LINUX_USER
+WorkingDirectory=/path/to/llama.cpp
+ExecStart=/path/to/llama.cpp/build/bin/llama-server \
+  -hf ggml-org/Qwen3-1.7B-GGUF:Q4_K_M \
+  --host 127.0.0.1 \
+  --port 8082 \
+  --ctx-size 4096 \
+  --parallel 1
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

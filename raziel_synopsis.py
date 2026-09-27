@@ -610,7 +610,7 @@ class QwenSummarizer:
     def is_available(self) -> bool:
         request = Request(
             self.health_url,
-            headers={"User-Agent": "Raziel/6.9"},
+            headers={"User-Agent": "Raziel/6.10"},
         )
         try:
             with urlopen(request, timeout=2) as response:
@@ -671,7 +671,7 @@ class QwenSummarizer:
             data=json.dumps(payload).encode("utf-8"),
             headers={
                 "Content-Type": "application/json",
-                "User-Agent": "Raziel/6.9",
+                "User-Agent": "Raziel/6.10",
             },
             method="POST",
         )

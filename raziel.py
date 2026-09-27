@@ -1,9 +1,9 @@
 #--------------------------------------------
 # file:     raziel.py
 # author:   Typezer∅
-# version:  6.9
+# version:  6.10
 # created:  2026-04-18
-# updated:  2026-05-18
+# updated:  2026-09-27
 # desc:     Queue-based Telegram media bot
 #           with interactive UI, weather,
 #           forecast, routing, archive send,
@@ -33,7 +33,7 @@ from urllib.request import urlopen
 # ── Branding ─────────────────────────────────────────────────
 
 BOT_NAME = "Raziel"
-BOT_VERSION = "6.9"
+BOT_VERSION = "6.10"
 
 import yt_dlp
 from raziel_synopsis import SynopsisError, build_synopsis_for_url

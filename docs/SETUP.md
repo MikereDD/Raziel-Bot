@@ -1,164 +1,986 @@
-# Raziel Setup Guide
+# --------------------------------------------
+# file:     raziel_synopsis.py
+# author:   Typezer∅
+# feature:  Synopsis foundation
+# desc:     Caption-first transcript extraction
+#           and local synopsis generation.
+# --------------------------------------------
 
-This guide covers a standalone Raziel installation on Linux. Adjust package-manager and service paths for your own system.
+from __future__ import annotations
 
-## 1. System dependencies
+from dataclasses import dataclass
+from difflib import SequenceMatcher
+from html import unescape
+import json
+import math
+import os
+import re
+from pathlib import Path
+from typing import Protocol
+from urllib.request import Request, urlopen
 
-Raziel requires Python 3.10+ and FFmpeg/ffprobe.
+import yt_dlp
 
-On Arch Linux:
 
-```bash
-sudo pacman -S --needed python ffmpeg git
-```
+class SynopsisError(RuntimeError):
+    """Expected synopsis/caption failure suitable for user-facing reporting."""
 
-`ffprobe` is provided with FFmpeg on a standard Arch installation.
 
-A current JavaScript runtime can also help yt-dlp with extractors that require one:
+@dataclass(slots=True)
+class CaptionTrack:
+    language: str
+    source: str
+    ext: str
+    url: str
 
-```bash
-sudo pacman -S --needed nodejs
-```
 
-## 2. Python environment
+@dataclass(slots=True)
+class SynopsisResult:
+    title: str
+    uploader: str
+    duration: int | None
+    language: str
+    caption_source: str
+    transcript_chars: int
+    transcript_words: int
+    synopsis: str
 
-From the Raziel repository:
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-```
+class Summarizer(Protocol):
+    """Backend boundary for future LLM/local-model summarizers."""
 
-The `.venv/` directory is intentionally ignored by Git.
+    def summarize(self, text: str, *, title: str = "") -> str:
+        ...
 
-## 3. Configuration
 
-For a simple local installation:
+_TIMESTAMP_RE = re.compile(
+    r"^\s*(?:\d{1,2}:)?\d{1,2}:\d{2}[.,]\d{3}\s+-->\s+"
+    r"(?:\d{1,2}:)?\d{1,2}:\d{2}[.,]\d{3}"
+)
+_TAG_RE = re.compile(r"<[^>]+>")
+_BRACKET_NOISE_RE = re.compile(
+    r"\[(?:music|applause|laughter|laughs|cheering|silence|noise|inaudible|crosstalk|foreign)\]",
+    re.IGNORECASE,
+)
+_SPEAKER_ARROW_RE = re.compile(r"(?:^|\s)(?:>>+|»+)(?=\s|$)")
+_WS_RE = re.compile(r"\s+")
+_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'])")
+_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9'-]{1,}")
+_VTT_CONTROL_RE = re.compile(r"^(?:WEBVTT|Kind:|Language:|NOTE\b|STYLE\b|REGION\b)")
+_CUE_ID_RE = re.compile(r"^\d+$")
 
-```bash
-cp config/razielrc_EXAMPLE.py config/razielrc.py
-chmod 600 config/razielrc.py
-```
+_STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "been", "but", "by", "can",
+    "could", "did", "do", "does", "for", "from", "had", "has", "have", "he",
+    "her", "here", "hers", "him", "his", "how", "i", "if", "in", "into", "is",
+    "it", "its", "just", "may", "me", "more", "most", "my", "no", "not", "of",
+    "on", "or", "our", "out", "she", "so", "some", "than", "that", "the",
+    "their", "them", "then", "there", "these", "they", "this", "those", "to",
+    "too", "up", "us", "was", "we", "were", "what", "when", "where", "which",
+    "who", "why", "will", "with", "would", "you", "your",
+}
 
-Edit `config/razielrc.py` and set at least:
 
-```python
-BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-ALLOWED_USER_ID = 123456789
-```
+def _language_rank(language: str) -> tuple[int, str]:
+    lang = (language or "").lower().replace("_", "-")
+    if lang == "en":
+        return (0, lang)
+    if lang.startswith("en-"):
+        return (1, lang)
+    if lang.startswith("en"):
+        return (2, lang)
+    return (100, lang)
 
-The live config is excluded by `.gitignore`.
 
-For a config completely outside the repository:
+def _format_rank(ext: str) -> int:
+    return {
+        "vtt": 0,
+        "srt": 1,
+        "json3": 2,
+        "srv3": 3,
+        "ttml": 4,
+    }.get((ext or "").lower(), 50)
 
-```bash
-mkdir -p "$HOME/.config/raziel"
-cp config/razielrc_EXAMPLE.py "$HOME/.config/raziel/razielrc.py"
-chmod 600 "$HOME/.config/raziel/razielrc.py"
-export RAZIEL_CONFIG="$HOME/.config/raziel/razielrc.py"
-```
 
-Raziel also preserves compatibility with the older sibling `../config/ytbotrc.py` deployment layout.
+def _pick_track_from_group(
+    tracks: dict,
+    *,
+    source: str,
+) -> CaptionTrack | None:
+    english = sorted(
+        ((lang, entries) for lang, entries in (tracks or {}).items()
+         if _language_rank(lang)[0] < 100),
+        key=lambda item: _language_rank(item[0]),
+    )
 
-## 4. Runtime directory
+    for language, entries in english:
+        candidates = []
+        for entry in entries or []:
+            url = str(entry.get("url") or "").strip()
+            if not url:
+                continue
+            ext = str(entry.get("ext") or "").lower()
+            candidates.append((_format_rank(ext), ext, url))
 
-The example configuration stores runtime data under:
+        if candidates:
+            _, ext, url = min(candidates, key=lambda item: item[0])
+            return CaptionTrack(
+                language=language,
+                source=source,
+                ext=ext,
+                url=url,
+            )
 
-```text
-$HOME/.local/share/raziel
-```
+    return None
 
-Raziel creates the needed `state`, `downloads`, `logs`, `done`, `watch`, and `cookies` subdirectories automatically.
 
-Keep this runtime directory outside version control.
+def choose_caption_track(info: dict) -> CaptionTrack:
+    # Human English subtitles first.
+    track = _pick_track_from_group(info.get("subtitles") or {}, source="human")
+    if track:
+        return track
 
-## 5. Run Raziel
+    # Then English automatic captions.
+    track = _pick_track_from_group(
+        info.get("automatic_captions") or {},
+        source="automatic",
+    )
+    if track:
+        return track
 
-```bash
-source .venv/bin/activate
-python raziel.py
-```
+    human_langs = sorted((info.get("subtitles") or {}).keys())
+    auto_langs = sorted((info.get("automatic_captions") or {}).keys())
 
-If you use an external configuration:
+    available = []
+    if human_langs:
+        available.append("human: " + ", ".join(human_langs[:12]))
+    if auto_langs:
+        available.append("auto: " + ", ".join(auto_langs[:12]))
 
-```bash
-RAZIEL_CONFIG="$HOME/.config/raziel/razielrc.py" python raziel.py
-```
+    suffix = f" Available tracks: {'; '.join(available)}." if available else ""
+    raise SynopsisError("No English captions are available for this video." + suffix)
 
-## 6. Optional local Telegram Bot API
 
-Raziel can use a locally hosted Telegram Bot API endpoint for large-file workflows. This is optional; leave `LOCAL_BOT_API_URL` and `LOCAL_BOT_API_FILE_URL` empty if you are using Telegram's normal Bot API endpoints.
+def _download_text(url: str, *, timeout: int = 30) -> str:
+    request = Request(
+        url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 Chrome/153 Safari/537.36"
+            )
+        },
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            raw = response.read()
+    except Exception as exc:
+        raise SynopsisError(f"Could not download caption track: {exc}") from exc
 
-When using a local Bot API server, obtain your Telegram `api_id` and `api_hash` through Telegram's official developer process and keep both values private.
+    return raw.decode("utf-8", errors="replace")
 
-Example configuration:
 
-```python
-LOCAL_BOT_API_URL = "http://127.0.0.1:8081/bot"
-LOCAL_BOT_API_FILE_URL = "http://127.0.0.1:8081/file/bot"
-```
+def _normalize_caption_line(line: str) -> str:
+    line = unescape(line)
+    line = _TAG_RE.sub("", line)
+    line = _BRACKET_NOISE_RE.sub(" ", line)
+    line = _SPEAKER_ARROW_RE.sub(" ", line)
+    line = line.replace("\u200b", "")
+    line = _WS_RE.sub(" ", line).strip(" -–—")
+    return line
 
-The template files under `docs/etc/` and `docs/scripts/` contain placeholders only. Replace the placeholders locally; never commit your real API credentials.
 
-## 7. Validation
+def _caption_similarity(left: str, right: str) -> float:
+    if not left or not right:
+        return 0.0
 
-Check Python syntax:
+    a = _WS_RE.sub(" ", left.lower()).strip()
+    b = _WS_RE.sub(" ", right.lower()).strip()
 
-```bash
-python -m py_compile raziel.py config/razielrc_EXAMPLE.py
-```
+    if a == b:
+        return 1.0
 
-Confirm FFmpeg tools are available:
+    a_words = set(_WORD_RE.findall(a))
+    b_words = set(_WORD_RE.findall(b))
+    jaccard = (
+        len(a_words & b_words) / max(len(a_words | b_words), 1)
+        if a_words and b_words
+        else 0.0
+    )
+    sequence = SequenceMatcher(None, a, b).ratio()
+    return max(jaccard, sequence)
 
-```bash
-ffmpeg -version
-ffprobe -version
-```
 
-Start Raziel and confirm `/start`, `/help`, `/status` (admin), and a test media command behave as expected in your intended Telegram chat.
+def clean_vtt_or_srt(raw: str) -> str:
+    """Convert VTT/SRT captions to deduplicated plain transcript text."""
 
-## 8. Troubleshooting
+    lines: list[str] = []
 
-### Missing config
+    for raw_line in raw.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        line = raw_line.strip()
 
-If Raziel reports that it cannot find its configuration, either create:
+        if not line:
+            continue
+        if _VTT_CONTROL_RE.match(line):
+            continue
+        if _TIMESTAMP_RE.match(line):
+            continue
+        if _CUE_ID_RE.match(line):
+            continue
+        if line.startswith("X-TIMESTAMP-MAP"):
+            continue
 
-```text
-config/razielrc.py
-```
+        line = _normalize_caption_line(line)
+        if not line:
+            continue
 
-or set:
+        if lines:
+            previous = lines[-1]
 
-```bash
-export RAZIEL_CONFIG="/absolute/path/to/ytbotrc.py"
-```
+            if line.startswith(previous) and len(line) > len(previous):
+                lines[-1] = line
+                continue
 
-### yt-dlp extraction failures
+            if previous.startswith(line):
+                continue
 
-Update the installed dependency in the active virtual environment:
+            if _caption_similarity(previous, line) >= 0.90:
+                if len(line) > len(previous):
+                    lines[-1] = line
+                continue
 
-```bash
-python -m pip install --upgrade yt-dlp
-```
+        lines.append(line)
 
-Source-site changes can break individual extractors independently of Raziel.
+    text = " ".join(lines)
+    text = _WS_RE.sub(" ", text).strip()
+    return text
 
-### FFmpeg/ffprobe unavailable
 
-Install FFmpeg through your operating system package manager and ensure both commands are available in `PATH`.
+def clean_json3(raw: str) -> str:
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SynopsisError("Caption JSON could not be parsed.") from exc
 
-### Upload timeout or size issues
+    parts: list[str] = []
+    previous = ""
 
-Check Raziel's logs and verify `TELEGRAM_UPLOAD_TIMEOUT`. For the large-file workflow, also verify that your local Telegram Bot API server is actually running and that Raziel's local API URLs match it.
+    for event in payload.get("events") or []:
+        segs = event.get("segs") or []
+        text = "".join(str(seg.get("utf8") or "") for seg in segs)
+        text = _normalize_caption_line(text.replace("\n", " "))
 
-## Security checklist
+        if not text or text == previous:
+            continue
 
-- [ ] Real bot token is not in Git.
-- [ ] Telegram API ID/hash are not in Git.
-- [ ] Cookie files are private and untracked.
-- [ ] Runtime logs/state/downloads are outside Git.
-- [ ] Access-control lists contain only intended users/admins.
-- [ ] Group auto-watch behavior is configured intentionally.
-- [ ] Telegram bot permissions/privacy settings match the features you intend to use.
+        parts.append(text)
+        previous = text
+
+    return _WS_RE.sub(" ", " ".join(parts)).strip()
+
+
+def clean_caption_text(raw: str, ext: str) -> str:
+    if (ext or "").lower() == "json3":
+        text = clean_json3(raw)
+    else:
+        text = clean_vtt_or_srt(raw)
+
+    if len(text) < 80:
+        raise SynopsisError("The caption track was empty or too short to summarize.")
+    return text
+
+
+def chunk_transcript(text: str, max_chars: int = 9000) -> list[str]:
+    """
+    Split a transcript on sentence boundaries while keeping chunks reasonably
+    sized. This is intentionally backend-neutral for future LLM summarizers.
+    """
+
+    sentences = split_sentences(text)
+    if not sentences:
+        return [text] if text else []
+
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+
+    for sentence in sentences:
+        add_len = len(sentence) + (1 if current else 0)
+
+        if current and current_len + add_len > max_chars:
+            chunks.append(" ".join(current))
+            current = [sentence]
+            current_len = len(sentence)
+        else:
+            current.append(sentence)
+            current_len += add_len
+
+    if current:
+        chunks.append(" ".join(current))
+
+    return chunks
+
+
+def split_sentences(text: str) -> list[str]:
+    text = _WS_RE.sub(" ", text).strip()
+    if not text:
+        return []
+
+    sentences = [
+        s.strip()
+        for s in _SENTENCE_RE.split(text)
+        if len(s.strip()) >= 24
+    ]
+
+    # Caption text frequently lacks punctuation. Fall back to bounded blocks.
+    if len(sentences) <= 1 and len(text) > 500:
+        words = text.split()
+        sentences = []
+        for start in range(0, len(words), 45):
+            block = " ".join(words[start:start + 45]).strip()
+            if block:
+                sentences.append(block)
+
+    return sentences
+
+
+class ExtractiveSummarizer:
+    """
+    Dependency-free baseline summarizer.
+
+    The goal is not to imitate an LLM. It selects a small set of distinct,
+    information-dense transcript sentences while avoiding adjacent/repetitive
+    caption fragments. A future local LLM backend can replace this class
+    without changing caption extraction or Telegram command handling.
+    """
+
+    def __init__(self, max_sentences: int = 5, max_chars: int = 2000):
+        self.max_sentences = max_sentences
+        self.max_chars = max_chars
+
+    @staticmethod
+    def _content_words(text: str) -> list[str]:
+        return [
+            w.lower()
+            for w in _WORD_RE.findall(text)
+            if w.lower() not in _STOPWORDS and len(w) > 2
+        ]
+
+    @classmethod
+    def _frequencies(cls, text: str) -> dict[str, float]:
+        words = cls._content_words(text)
+        if not words:
+            return {}
+
+        counts: dict[str, int] = {}
+        for word in words:
+            counts[word] = counts.get(word, 0) + 1
+
+        highest = max(counts.values())
+        return {word: count / highest for word, count in counts.items()}
+
+    @classmethod
+    def _similarity(cls, left: str, right: str) -> float:
+        a = set(cls._content_words(left))
+        b = set(cls._content_words(right))
+        if not a or not b:
+            return 0.0
+
+        jaccard = len(a & b) / max(len(a | b), 1)
+        sequence = SequenceMatcher(None, left.lower(), right.lower()).ratio()
+        return max(jaccard, sequence)
+
+    @staticmethod
+    def _polish_sentence(sentence: str) -> str:
+        sentence = _WS_RE.sub(" ", sentence).strip()
+
+        leadins = (
+            r"^(?:yes|no|now|well|okay|ok)[,;:]?\s+",
+            r"^(?:but\s+)?i think(?: one thing)?(?: we can all agree on)?[,;:]?\s*",
+            r"^(?:and\s+)?what(?:'s| is) important is[,;:]?\s*",
+            r"^(?:so\s+)?the point is[,;:]?\s*",
+            r"^(?:now\s+)?our story concerns[,;:]?\s*",
+        )
+        for pattern in leadins:
+            cleaned = re.sub(pattern, "", sentence, flags=re.IGNORECASE)
+            if cleaned != sentence and len(cleaned) >= 40:
+                sentence = cleaned
+                break
+
+        if sentence:
+            sentence = sentence[0].upper() + sentence[1:]
+
+        return sentence
+
+    def summarize(self, text: str, *, title: str = "") -> str:
+        sentences = split_sentences(text)
+
+        # Drop weak/rhetorical caption fragments before scoring.
+        sentences = [
+            s.strip()
+            for s in sentences
+            if len(s.strip()) >= 55
+            and len(s.strip()) <= 360
+            and len(self._content_words(s)) >= 6
+            and not s.strip().lower().startswith(
+                (
+                    "and ", "but ", "so ", "because ", "well ", "okay ", "ok ",
+                    "yeah ", "i think ", "i believe ", "in my opinion ",
+                    "you know ", "let's ", "we ", "our ", "i ", "i'm ", "i've ",
+                )
+            )
+            and not s.rstrip().endswith("?")
+            and not any(
+                phrase in s.lower()
+                for phrase in (
+                    "we can all agree",
+                    "our story concerns",
+                    "what we're going to",
+                    "i'm going to show",
+                    "as you can see",
+                    "the point i'm trying",
+                    "we don't know",
+                    "we do know",
+                    "i don't know",
+                    "i do know",
+                    "he quotes",
+                    "she quotes",
+                    "i quote",
+                    "there is one",
+                    "there's one",
+                )
+            )
+        ]
+
+        if not sentences:
+            return text[: self.max_chars].strip()
+
+        frequencies = self._frequencies(text)
+        title_words = set(self._content_words(title))
+        total = max(len(sentences), 1)
+
+        candidates: list[tuple[float, int, str]] = []
+
+        for index, sentence in enumerate(sentences):
+            words = self._content_words(sentence)
+            if not words:
+                continue
+
+            lexical = sum(frequencies.get(w, 0.0) for w in words)
+            lexical /= math.sqrt(max(len(words), 1))
+
+            title_overlap = sum(1 for w in words if w in title_words)
+            position_bonus = 0.20 * (1.0 - (index / total))
+
+            # Penalize obvious intro/channel boilerplate and favor details.
+            lowered = sentence.lower()
+            boilerplate_penalty = 0.0
+            for phrase in (
+                "subscribe",
+                "like and subscribe",
+                "welcome back",
+                "in today's video",
+                "sponsor",
+                "patreon",
+                "thanks for watching",
+                "click the link",
+            ):
+                if phrase in lowered:
+                    boilerplate_penalty += 0.6
+
+            detail_bonus = 0.0
+            if re.search(r"\b\d+(?:\.\d+)?%?\b", sentence):
+                detail_bonus += 0.18
+            if re.search(r"\b(?:19|20)\d{2}\b", sentence):
+                detail_bonus += 0.12
+
+            proper_nouns = re.findall(r"\b[A-Z][a-z]{2,}\b", sentence)
+            detail_bonus += min(len(proper_nouns), 4) * 0.035
+
+            for term in (
+                "according to",
+                "located",
+                "population",
+                "controlled by",
+                "operated by",
+                "ministry",
+                "government",
+                "authority",
+                "checkpoint",
+                "border",
+                "law",
+                "percent",
+                "million",
+                "billion",
+            ):
+                if term in lowered:
+                    detail_bonus += 0.08
+
+            pronoun_penalty = 0.0
+            pronoun_hits = len(
+                re.findall(
+                    r"\b(?:he|she|they|them|this|that|these|those|it|its)\b",
+                    lowered,
+                )
+            )
+            if pronoun_hits >= 3:
+                pronoun_penalty = min(0.30, pronoun_hits * 0.05)
+
+            if lowered.startswith(("there is ", "there are ", "there's ")):
+                pronoun_penalty += 0.18
+
+            score = (
+                lexical
+                + (title_overlap * 0.20)
+                + position_bonus
+                + min(detail_bonus, 0.45)
+                - boilerplate_penalty
+                - pronoun_penalty
+            )
+            candidates.append((score, index, sentence))
+
+        selected: list[tuple[int, str]] = []
+
+        for _, index, sentence in sorted(candidates, reverse=True):
+            if any(self._similarity(sentence, other) >= 0.48 for _, other in selected):
+                continue
+
+            selected.append((index, sentence))
+            if len(selected) >= self.max_sentences:
+                break
+
+        if not selected:
+            selected = list(enumerate(sentences[: self.max_sentences]))
+
+        # Preserve transcript chronology after scoring.
+        selected.sort(key=lambda item: item[0])
+
+        bullets: list[str] = []
+        for _, sentence in selected:
+            sentence = self._polish_sentence(sentence)
+            if not sentence:
+                continue
+            if len(sentence) > 260:
+                sentence = sentence[:260].rsplit(" ", 1)[0].rstrip() + "…"
+            elif sentence[-1] not in ".!?":
+                sentence += "."
+            bullets.append(f"• {sentence}")
+
+        summary = "\n".join(bullets)
+
+        if len(summary) > self.max_chars:
+            summary = summary[: self.max_chars].rsplit(" ", 1)[0].rstrip() + "…"
+
+        return summary.strip()
+
+
+class QwenSummarizer:
+    """Local abstractive summarizer backed by a persistent llama.cpp server."""
+
+    chunk_chars = 3500
+
+    def __init__(
+        self,
+        *,
+        api_url: str = "http://127.0.0.1:8082/v1/chat/completions",
+        health_url: str = "http://127.0.0.1:8082/health",
+        model: str = "default",
+        timeout: int = 120,
+    ):
+        self.api_url = api_url
+        self.health_url = health_url
+        self.model = model
+        self.timeout = timeout
+
+    @classmethod
+    def from_environment(cls) -> "QwenSummarizer":
+        return cls(
+            api_url=os.environ.get(
+                "RAZIEL_LLM_URL",
+                "http://127.0.0.1:8082/v1/chat/completions",
+            ),
+            health_url=os.environ.get(
+                "RAZIEL_LLM_HEALTH_URL",
+                "http://127.0.0.1:8082/health",
+            ),
+            model=os.environ.get("RAZIEL_LLM_MODEL", "default"),
+            timeout=int(os.environ.get("RAZIEL_LLM_TIMEOUT", "120")),
+        )
+
+    def is_available(self) -> bool:
+        request = Request(
+            self.health_url,
+            headers={"User-Agent": "Raziel/6.10"},
+        )
+        try:
+            with urlopen(request, timeout=2) as response:
+                return 200 <= int(response.status) < 300
+        except Exception:
+            return False
+
+    @staticmethod
+    def _normalize_bullets(text: str, *, max_points: int) -> str:
+        text = re.sub(
+            r"<think>.*?</think>",
+            "",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        text = text.replace("[Start thinking]", "").replace("[End thinking]", "")
+        text = text.strip()
+
+        bullets: list[str] = []
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            line = re.sub(r"^(?:[-*•]+|\d+[.)])\s*", "", line).strip()
+            if not line:
+                continue
+
+            if len(line) > 320:
+                line = line[:320].rsplit(" ", 1)[0].rstrip() + "…"
+
+            bullets.append(f"• {line}")
+            if len(bullets) >= max_points:
+                break
+
+        if not bullets:
+            raise SynopsisError("Local LLM returned no usable summary text.")
+
+        return "\n".join(bullets)
+
+    def _complete(self, prompt: str, *, max_tokens: int) -> str:
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "/no_think\n" + prompt,
+                }
+            ],
+            "temperature": 0.2,
+            "top_p": 0.9,
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+
+        request = Request(
+            self.api_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "Raziel/6.10",
+            },
+            method="POST",
+        )
+
+        try:
+            with urlopen(request, timeout=self.timeout) as response:
+                raw = response.read().decode("utf-8", errors="replace")
+        except Exception as exc:
+            raise SynopsisError(f"Local LLM request failed: {exc}") from exc
+
+        try:
+            data = json.loads(raw)
+            content = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+            raise SynopsisError("Local LLM returned an unexpected response.") from exc
+
+        content = str(content or "").strip()
+        if not content:
+            raise SynopsisError("Local LLM returned an empty response.")
+
+        return content
+
+    def summarize(self, text: str, *, title: str = "") -> str:
+        prompt = f"""Summarize this transcript excerpt in 3 concise, non-redundant bullet points.
+
+Video title: {title}
+
+Rules:
+- Use only information explicitly stated in the transcript.
+- Do not add outside knowledge.
+- Do not turn opinions, allegations, estimates, or interpretations into established facts.
+- Attribute claims using wording such as "The video says", "The speaker says", "The video argues", or "The transcript describes".
+- Do not repeat the same point.
+- Return only the bullet points.
+
+Transcript excerpt:
+{text}
+"""
+        # Synopsis prompt refinement v1.3
+        prompt += (
+            "\n\nAdditional accuracy rules:\n"
+            "- Prefer concrete names, systems, organizations, places, and actions when they are explicitly present in the source. "
+            "Do not replace a named subject with vague wording such as 'a country', 'the situation', or 'the conflict' unless the source itself is vague.\n"
+            "- Preserve attribution for claims, allegations, accusations, estimates, interpretations, opinions, predictions, and moral judgments. "
+            "Use wording such as 'The video says', 'The speaker argues', 'The transcript describes', or 'According to the speaker' when appropriate.\n"
+            "- Never convert words such as alleged, claimed, reported, suggested, estimated, or argued into an unqualified factual statement.\n"
+            "- Do not introduce new moral, emotional, legal, or political conclusions that are not explicitly supported by the supplied transcript chunk.\n"
+            "- Keep each bullet focused on what the source communicates, not on what you independently conclude from it."
+        )
+        # Synopsis prompt refinement v1.4
+        prompt += (
+            "\n\nStrict source-faithfulness rules:\n"
+            "- Treat the transcript as a source to summarize, not as verified truth.\n"
+            "- For disputed, political, military, legal, casualty, accuracy, motive, or responsibility claims, use explicit source attribution in the bullet itself.\n"
+            "- Numerical claims must keep their source framing. Use wording such as 'The transcript says...', 'The speaker cites...', or 'The IDF is described as claiming...'; do not present the number as independently established.\n"
+            "- Avoid verbs that imply independent verification, including 'reveals', 'proves', 'confirms', 'demonstrates', and 'establishes'. Prefer 'describes', 'says', 'argues', 'claims', 'reports', or 'discusses'.\n"
+            "- Do not infer causation, intent, systemic conclusions, or the absence of systemic problems unless the supplied text explicitly states that exact conclusion.\n"
+            "- If the text contains competing claims, summarize them as competing claims rather than resolving the dispute."
+        )
+        result = self._complete(prompt, max_tokens=320)
+        return self._normalize_bullets(result, max_points=3)
+
+    def summarize_final(self, text: str, *, title: str = "") -> str:
+        prompt = f"""Create the final synopsis for this video from the chunk summaries below.
+
+Video title: {title}
+
+Return exactly 5 concise, non-redundant bullet points.
+
+Rules:
+- Use only information present in the supplied chunk summaries.
+- Do not add outside knowledge.
+- Preserve attribution for claims, opinions, allegations, estimates, and interpretations.
+- Do not strengthen uncertain language into established fact.
+- Prefer the most important distinct points across the whole video.
+- Return only the bullet points.
+
+Chunk summaries:
+{text}
+"""
+        # Synopsis prompt refinement v1.3
+        prompt += (
+            "\n\nFinal-reduction accuracy rules:\n"
+            "- Produce exactly 5 bullets when the supplied material supports 5 distinct points.\n"
+            "- Prefer five distinct major topics from across the supplied chunk summaries; avoid spending multiple bullets on the same theme unless it dominates the source.\n"
+            "- Keep concrete names, systems, organizations, places, and actions when they are available. Avoid vague substitutions for named subjects.\n"
+            "- Preserve every important qualifier and attribution from the chunk summaries. If a point was presented as a claim, allegation, argument, estimate, interpretation, or opinion, keep it framed that way.\n"
+            "- Never strengthen uncertainty: alleged/claimed/reported/suggested/estimated/argued must not become an unqualified fact.\n"
+            "- Do not add outside knowledge or new moral, emotional, legal, or political framing.\n"
+            "- When necessary for accuracy, explicitly write 'The video says', 'The speaker argues', 'The transcript describes', or similar source-attribution language."
+        )
+        # Synopsis prompt refinement v1.4
+        prompt += (
+            "\n\nStrict final-output rules:\n"
+            "- Every bullet must make clear that it is summarizing the video, speaker, transcript, or a named source; do not write contested claims in Raziel's own voice.\n"
+            "- Preserve attribution on all casualty figures, accuracy percentages, allegations of misconduct, legal claims, political interpretations, military claims, and claims about responsibility or motive.\n"
+            "- Never use 'reveals', 'proves', 'confirms', 'demonstrates', or 'establishes' for a contested claim. Use neutral source-reporting verbs instead.\n"
+            "- Do not add conclusions such as 'not a systemic issue', 'systemic', 'intentional', 'caused by', or similar unless that conclusion appears explicitly in the supplied summaries and is itself attributed.\n"
+            "- If two supplied summaries conflict or appear ambiguous, preserve the ambiguity instead of reconciling them.\n"
+            "- Prefer factual wording about what the video discusses over rhetorical or emotionally intensified wording."
+        )
+        # Synopsis prompt refinement v1.5
+        prompt += (
+            "\n\nCoverage and deduplication rules:\n"
+            "- Produce five bullets that cover five distinct major topics when the supplied material contains enough distinct topics.\n"
+            "- Prefer coverage from different portions of the video rather than clustering around one event or one section.\n"
+            "- Do not use more than two bullets for the same event, incident, allegation, system, or theme unless the source is overwhelmingly about that single topic.\n"
+            "- If two candidate bullets substantially overlap, keep the broader or more informative one and use the freed bullet for a different major topic.\n"
+            "- Prioritize major themes over repeated details from the same story.\n"
+            "- Keep all prior source-attribution, uncertainty, and neutrality rules unchanged."
+        )
+        # Synopsis prompt refinement v1.6
+        prompt += (
+            "\n\nFinal attribution and topic-separation rules:\n"
+            "- Every final bullet must begin with explicit source attribution such as 'The video says...', 'The speaker argues...', 'The transcript describes...', or a named source followed by 'says/claims/argues/reports'.\n"
+            "- Do not begin a final bullet with an unqualified contested statement.\n"
+            "- Keep all prior uncertainty, neutrality, numerical-attribution, coverage, and deduplication rules unchanged.\n"
+            "- Do not combine two unrelated topics in one bullet merely to fill the five-bullet target.\n"
+            "- If a candidate bullet contains two unrelated claims, keep the more important one and use another distinct supported topic for the remaining bullet.\n"
+            "- Prefer one coherent subject per bullet."
+        )
+        # Synopsis prompt refinement v1.7
+        prompt += (
+            "\n\nInternal-attribution hardening rules:\n"
+            "- Attribution must remain clear throughout each bullet, not only in the opening words.\n"
+            "- When a bullet contains causal, legal, systemic, responsibility, motive, or prosecution claims, explicitly attribute those clauses too rather than presenting them as independent conclusions.\n"
+            "- Use phrasing such as 'the video argues that...', 'the speaker says this leads to...', 'the transcript describes this as...', or 'according to the source...' inside the bullet when needed.\n"
+            "- Do not state that something causes, proves, exposes, exempts, constitutes, or demonstrates a systemic pattern unless the source itself is explicitly framed as making that claim.\n"
+            "- Preserve all prior attribution, uncertainty, neutrality, coverage, and deduplication rules unchanged.\n"
+            "- Keep each bullet concise even when adding internal attribution."
+        )
+        # Synopsis prompt refinement v1.8
+        prompt += (
+            "\n\nSelection-not-synthesis rules:\n"
+            "- Treat the supplied chunk summaries as candidate source bullets to select and lightly rewrite, not as material to combine into new conclusions.\n"
+            "- Each final bullet must correspond primarily to one supplied chunk-summary idea.\n"
+            "- Do not invent causal links, contrasts, timelines, motivations, or relationships between separate chunk summaries.\n"
+            "- Do not merge separate claims merely because they share a subject, location, person, organization, or theme.\n"
+            "- Prefer preserving the clearest supported wording from a chunk summary over generating a more elegant but broader synthesis.\n"
+            "- If a source detail is ambiguous, awkward, or incomplete, keep the ambiguity rather than resolving it with inference.\n"
+            "- If two candidate summaries conflict, do not reconcile them; choose one major point or describe the disagreement with attribution.\n"
+            "- Keep one coherent source idea per bullet and preserve all prior attribution, uncertainty, neutrality, coverage, and deduplication rules."
+        )
+        # Synopsis cosmetic paraphrase rule v1
+        prompt += (
+            "\n\nParaphrase formatting rule:\n"
+            "- These bullets are summaries, not verbatim quotations. Do not wrap paraphrased bullet text in quotation marks.\n"
+            "- Use quotation marks only for a short phrase that is explicitly presented as a direct quote in the supplied source material.\n"
+            "- Prefer: The video says that Gospel automates target selection.\n"
+            "- Avoid: The video says, \"Gospel automates target selection.\""
+        )
+        result = self._complete(prompt, max_tokens=520)
+        return self._normalize_bullets(result, max_points=5)
+
+
+def _default_summarizer() -> Summarizer:
+    qwen = QwenSummarizer.from_environment()
+    if qwen.is_available():
+        return qwen
+    return ExtractiveSummarizer()
+
+
+def summarize_chunked(
+    transcript: str,
+    *,
+    title: str,
+    summarizer: Summarizer,
+) -> str:
+    chunk_chars = int(getattr(summarizer, "chunk_chars", 9000))
+    chunks = chunk_transcript(transcript, max_chars=chunk_chars)
+
+    if len(chunks) <= 1:
+        return summarizer.summarize(transcript, title=title)
+
+    chunk_summaries = [
+        summarizer.summarize(chunk, title=title)
+        for chunk in chunks
+    ]
+
+    combined = " ".join(
+        line.lstrip("• ").strip()
+        for summary in chunk_summaries
+        for line in summary.splitlines()
+        if line.strip()
+    )
+
+    finalizer = getattr(summarizer, "summarize_final", None)
+    if callable(finalizer):
+        return finalizer(combined, title=title)
+
+    return summarizer.summarize(combined, title=title)
+
+
+def extract_transcript(
+    url: str,
+    *,
+    cookie_file: str | Path | None = None,
+) -> tuple[dict, CaptionTrack, str]:
+    options = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "noplaylist": True,
+    }
+
+    cookie_path = Path(cookie_file).expanduser() if cookie_file else None
+    if cookie_path and cookie_path.is_file():
+        options["cookiefile"] = str(cookie_path)
+
+    try:
+        with yt_dlp.YoutubeDL(options) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception as exc:
+        raise SynopsisError(f"Could not inspect video captions: {exc}") from exc
+
+    if not isinstance(info, dict):
+        raise SynopsisError("yt-dlp returned no usable video information.")
+
+    track = choose_caption_track(info)
+    raw = _download_text(track.url)
+    transcript = clean_caption_text(raw, track.ext)
+
+    return info, track, transcript
+
+
+def _format_duration(seconds: int | None) -> str:
+    if not seconds:
+        return "unknown"
+
+    seconds = int(seconds)
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+
+    if hours:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes}:{seconds:02d}"
+
+
+def build_synopsis_for_url(
+    url: str,
+    *,
+    cookie_file: str | Path | None = None,
+    summarizer: Summarizer | None = None,
+) -> str:
+    info, track, transcript = extract_transcript(
+        url,
+        cookie_file=cookie_file,
+    )
+
+    title = str(info.get("title") or "Untitled")
+    uploader = str(
+        info.get("uploader")
+        or info.get("channel")
+        or info.get("creator")
+        or "Unknown"
+    )
+    duration = info.get("duration")
+
+    backend = summarizer or _default_summarizer()
+
+    try:
+        synopsis = summarize_chunked(
+            transcript,
+            title=title,
+            summarizer=backend,
+        )
+    except SynopsisError:
+        if summarizer is not None:
+            raise
+
+        backend = ExtractiveSummarizer()
+        synopsis = summarize_chunked(
+            transcript,
+            title=title,
+            summarizer=backend,
+        )
+
+    result = SynopsisResult(
+        title=title,
+        uploader=uploader,
+        duration=int(duration) if duration else None,
+        language=track.language,
+        caption_source=track.source,
+        transcript_chars=len(transcript),
+        transcript_words=len(_WORD_RE.findall(transcript)),
+        synopsis=synopsis,
+    )
+
+    caption_note = ""
+    if result.caption_source == "automatic":
+        caption_note = (
+            "\nCaption note: automatic captions can mishear names, numbers, "
+            "and specialized terms."
+        )
+
+    output = (
+        f"📝 Synopsis\n\n"
+        f"{result.title}\n"
+        f"Source: {result.uploader}\n"
+        f"Duration: {_format_duration(result.duration)}\n"
+        f"Captions: {result.language} ({result.caption_source})\n"
+        f"Transcript: {result.transcript_words:,} words"
+        f"{caption_note}\n\n"
+        f"Key points from the video:\n{result.synopsis}"
+    )
+
+    # Telegram text messages cap at 4096 characters. Leave room for edits and
+    # avoid producing a transcript-sized wall of text.
+    if len(output) > 3900:
+        output = output[:3895].rsplit(" ", 1)[0].rstrip() + "…"
+
+    return output

@@ -3,6 +3,23 @@
 This file summarizes public-facing Raziel changes. Detailed historical design
 and implementation notes are preserved in [`notes/`](notes/README.md).
 
+## 6.10
+
+### Local AI synopsis
+
+- Added caption-first `/synopsis <url>` and reply-driven `/rsynopsis`.
+- Added English caption selection, cleanup, deduplication, and chunking.
+- Added a local Qwen3 1.7B `llama.cpp` backend through an OpenAI-compatible
+  endpoint on `127.0.0.1:8082`.
+- Added attributed multi-stage summarization with final five-bullet reduction.
+- Added automatic extractive fallback when the local LLM is unavailable.
+- Moved long synopsis generation into background tasks so normal Telegram
+  update processing and inline commands remain responsive.
+- Added handling for expired Telegram inline-query responses without noisy
+  traceback spam.
+- Added local-LLM deployment and troubleshooting documentation, including a
+  systemd service template and low-memory Raspberry Pi guidance.
+
 ## 6.9
 
 - Adopted quiet-first media captions for normal download commands.

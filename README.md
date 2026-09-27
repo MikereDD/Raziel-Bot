@@ -4,14 +4,14 @@
   <img src="assets/raziel-avatar.png" alt="Raziel" width="300">
 </p>
 
-![Version](https://img.shields.io/badge/version-v6.9-blue)
+![Version](https://img.shields.io/badge/version-v6.10-blue)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![Platform](https://img.shields.io/badge/platform-Telegram-26A5E4)
 ![Backend](https://img.shields.io/badge/media-yt--dlp-red)
 ![Processing](https://img.shields.io/badge/processing-FFmpeg-black)
 ![License](https://img.shields.io/badge/license-Typezer%E2%88%85%20All%20Rights%20Reserved-darkred)
 
-**Raziel** is a queue-driven Telegram bot for downloading, processing, routing, and reposting media with a quiet-first group-chat workflow. It combines `yt-dlp`, FFmpeg, Telegram commands, automatic link ingestion, reply-driven controls, persistent queue state, weather utilities, and optional local Telegram Bot API support for large uploads.
+**Raziel** is a queue-driven Telegram bot for downloading, processing, routing, and reposting media with a quiet-first group-chat workflow. It combines `yt-dlp`, FFmpeg, Telegram commands, automatic link ingestion, reply-driven controls, persistent queue state, weather utilities, caption-first video synopsis generation, optional local AI summarization, and optional local Telegram Bot API support for large uploads.
 
 Raziel is designed to stay useful without becoming noisy: ordinary downloads favor concise captions and transient status messages, while richer source metadata is available on demand.
 
@@ -29,6 +29,7 @@ Raziel is designed to stay useful without becoming noisy: ordinary downloads fav
 - Watch-folder and direct CLI ingestion.
 - Optional local Telegram Bot API support for large uploads.
 - Weather and forecast utilities powered by Open-Meteo.
+- Caption-first `/synopsis` and `/rsynopsis` with an optional local Qwen/llama.cpp backend and automatic extractive fallback.
 - Owner/admin controls for status, cleanup, queue management, reload, restart, and shutdown.
 
 ## Media workflow
@@ -84,6 +85,28 @@ Reply to a message containing a media URL with:
 ```
 
 Raziel keeps the resulting workflow attached to the original conversation whenever Telegram permits it.
+
+
+### Video synopsis
+
+Raziel can build a concise synopsis from video captions:
+
+```text
+/synopsis <url>
+/rsynopsis
+```
+
+`/rsynopsis` reads the URL from the message being replied to. English human
+captions are preferred when available, with automatic English captions as a
+fallback.
+
+The optional local AI path uses an OpenAI-compatible `llama.cpp` server with a
+small Qwen model. If that service is unavailable, Raziel automatically falls
+back to its extractive summarizer.
+
+See [`docs/LOCAL_LLM.md`](docs/LOCAL_LLM.md) for local model setup, systemd,
+resource guidance, environment overrides, and troubleshooting.
+
 
 ### Metadata-on-demand
 
@@ -158,6 +181,7 @@ Availability is ultimately determined by the installed yt-dlp version and the so
 - FFmpeg / ffprobe available in `PATH`
 - Telegram bot token from BotFather
 - Optional: locally hosted Telegram Bot API for large-file workflows
+- Optional: local `llama.cpp` server for AI-assisted caption synopsis generation
 
 Install the Python dependencies with:
 
@@ -170,7 +194,7 @@ python -m pip install -r requirements.txt
 Copy the safe example and keep the real configuration untracked:
 
 ```bash
-cp config/ytbotrc_EXAMPLE.py config/ytbotrc.py
+cp config/razielrc_EXAMPLE.py config/razielrc.py
 ```
 
 At minimum, configure:
@@ -191,30 +215,30 @@ Raziel resolves configuration in this order:
 For a private external configuration:
 
 ```bash
-export RAZIEL_CONFIG="$HOME/.config/raziel/ytbotrc.py"
-python ytbot.py
+export RAZIEL_CONFIG="$HOME/.config/raziel/razielrc.py"
+python raziel.py
 ```
 
-See [`config/ytbotrc_EXAMPLE.py`](config/ytbotrc_EXAMPLE.py) and [`docs/SETUP.md`](docs/SETUP.md) for the full configuration and deployment notes.
+See [`config/razielrc_EXAMPLE.py`](config/razielrc_EXAMPLE.py) and [`docs/SETUP.md`](docs/SETUP.md) for the full configuration and deployment notes.
 
 ## Running Raziel
 
 Interactive Telegram mode:
 
 ```bash
-python ytbot.py
+python raziel.py
 ```
 
 Direct CLI download:
 
 ```bash
-python ytbot.py --url "https://example.com/media"
+python raziel.py --url "https://example.com/media"
 ```
 
 Direct audio download:
 
 ```bash
-python ytbot.py --audio "https://example.com/media"
+python raziel.py --audio "https://example.com/media"
 ```
 
 ## Runtime directories
